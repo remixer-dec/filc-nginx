@@ -40,18 +40,14 @@ This preset:
 make -C objs-filc -j"$(nproc)"
 ```
 
-## 4) Package output binary + dependency artifacts
+## 4) Package for deployment
 
 ```bash
-scripts/package-filc-artifacts.sh
+scripts/package-filc-nginx.sh
 ```
 
 Produces:
-- `dist/nginx-filc-bundle.tar.gz`
-
-Bundle contents:
-- `nginx/nginx` binary and generated auto-config headers
-- dependency `include/` and `lib/` trees from `.filc-deps/prefix`
+- `filc-nginx.tar.gz`
 
 ## 5) FIL-C build/fix loop for follow-up sessions
 

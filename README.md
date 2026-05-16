@@ -9,6 +9,28 @@
 [![License](https://img.shields.io/badge/License-BSD%202--Clause-blue.svg)](/LICENSE)
 [![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](/CODE_OF_CONDUCT.md)
 
+This is an experimental proof-of-concept fork of NGINX designed to be built with [https://github.com/pizlonator/fil-c](fil-c) for guaranteed *memory safety*. The project successfully builds and runs (target: Debian 13, distroless). Basic tests pass, more advanced features like QUIC and mail are out of scope for this experiment. Stability is not guaranteed, some targeted requests may result in crashes. Basic tests show no crashes after patches for safer pointer handling applied. Disclaimer: AI-assisted tools like Codex and Opencode were used to make this work.  
+
+## Quick start
+
+**Build with Docker** — builds nginx from source with Fil-C and produces a distroless image:
+```bash
+docker build -t localhost/filc-nginx -f filc-nginx-bundle/Dockerfile.build .
+```
+or  
+
+**Download pre-built package** - built with Github Actions
+available in [Github Releases](https://github.com/remixer-dec/filc-nginx/releases)
+unpack the archive, then run `docker build -t localhost/filc-nginx`
+
+**Run distroless image** — deploy the packaged bundle in a minimal `gcr.io/distroless/base-debian13` container:
+- configure nginx, logs, pid, etc,
+- edit docker-compose to use the correct paths and ports
+- run
+```bash
+docker compose up -d
+```
+
 NGINX (pronounced "engine x" or "en-jin-eks") is the world's most popular Web Server, high performance Load Balancer, Reverse Proxy, API Gateway and Content Cache.
 
 NGINX is free and open source software, distributed under the terms of a simplified [2-clause BSD-like license](LICENSE).

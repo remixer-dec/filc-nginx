@@ -1,0 +1,116 @@
+services:
+  filc-nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      pull: false
+
+    image: localhost/filc-nginx
+    pull_policy: never
+    container_name: filc-nginx-container
+
+    restart: always
+    init: true
+    stop_signal: SIGQUIT
+    stop_grace_period: 30s
+
+    ports:
+      - target: 443
+        published: "443"
+        protocol: tcp
+        mode: host
+
+    environment:
+      LD_LIBRARY_PATH: /usr/local/filc-nginx/lib
+
+    security_opt:
+      - no-new-privileges:true
+
+    cap_drop:
+      - NET_RAW
+
+    pids_limit: 512
+
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      nproc: 4096
+
+
+    volumes:
+      - type: bind
+        source: ./static_files
+        target: /usr/share/nginx/html
+        read_only: true
+
+      - type: bind
+        source: /etc/nginx
+        target: /etc/nginx
+        read_only: true
+
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 67108864
+          mode: 1777
+
+      - type: tmpfs
+        target: /run
+        tmpfs:
+          size: 16777216
+          mode: 0755
+
+      - type: tmpfs
+        target: /var/run
+        tmpfs:
+          size: 16777216
+          mode: 0755
+
+      - type: tmpfs
+        target: /var/cache/nginx
+        tmpfs:
+          size: 67108864
+          mode: 0755
+
+      - type: tmpfs
+        target: /usr/local/filc-nginx/proxy_temp
+        tmpfs:
+          size: 134217728
+          mode: 1777
+
+      - type: tmpfs
+        target: /usr/local/filc-nginx/client_body_temp
+        tmpfs:
+          size: 67108864
+          mode: 1777
+
+      - type: tmpfs
+        target: /usr/local/filc-nginx/fastcgi_temp
+        tmpfs:
+          size: 67108864
+          mode: 1777
+
+      - type: tmpfs
+        target: /usr/local/filc-nginx/uwsgi_temp
+        tmpfs:
+          size: 67108864
+          mode: 1777
+
+      - type: tmpfs
+        target: /usr/local/filc-nginx/scgi_temp
+        tmpfs:
+          size: 67108864
+          mode: 1777
+
+    logging:
+      driver: journald
+      options:
+        tag: nginx-container
+
+    networks:
+      - bridgenet
+
+networks:
+  bridgenet:
+    driver: bridge
