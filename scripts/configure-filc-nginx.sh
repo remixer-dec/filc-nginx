@@ -19,4 +19,6 @@ cd "$ROOT_DIR"
   --with-filc-mode \
   --with-cc="${CC:-cc}" \
   --with-cc-opt="$COMMON_CC_OPT" \
-  --with-ld-opt="$COMMON_LD_OPT" 
+  --with-ld-opt="$COMMON_LD_OPT" \
+  --with-http_ssl_module \
+  --with-http_v2_module 
