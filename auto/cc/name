@@ -53,6 +53,20 @@ elif `$CC -V 2>&1 | grep '^Intel(R) C' >/dev/null 2>&1`; then
 
     have=NGX_COMPILER value="\"Intel C Compiler $NGX_CC_VER\"" . auto/define
 
+elif `$CC --version 2>&1 | grep -E '(^|[^A-Za-z])FIL-C([^A-Za-z]|$)' >/dev/null 2>&1`; then
+    NGX_CC_NAME=clang
+    echo " + using FIL-C compiler (Clang-compatible)"
+
+    NGX_CC_VER=`$CC --version 2>&1 | sed -n -e '1{s/^.*FIL-C[[:space:]]*//;s/[[:space:]]*$//;p;}'`
+
+    if [ -z "$NGX_CC_VER" ]; then
+        NGX_CC_VER=`$CC --version 2>&1 | sed -n -e '1p'`
+    fi
+
+    echo " + fil-c version: $NGX_CC_VER"
+
+    have=NGX_COMPILER value="\"filc $NGX_CC_VER\"" . auto/define
+
 elif `$CC -v 2>&1 | grep 'gcc version' >/dev/null 2>&1`; then
     NGX_CC_NAME=gcc
     echo " + using GNU C compiler"
