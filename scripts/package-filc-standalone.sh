@@ -35,7 +35,8 @@ if [ -z "$PIZFIX_LIB" ] || [ ! -d "$PIZFIX_LIB" ]; then
 fi
 
 # Clean staging
-rm -rf "$STAGING"
+rm -rf -- "$STAGING/lib" >/dev/null 2>&1 || true
+rm -rf -- "$STAGING/nginx" >/dev/null 2>&1 || true
 mkdir -p "$STAGING/lib"
 
 echo "=== Packaging Fil-C nginx ==="
