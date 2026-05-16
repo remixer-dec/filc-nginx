@@ -18,7 +18,11 @@ typedef struct ngx_slab_page_s  ngx_slab_page_t;
 struct ngx_slab_page_s {
     uintptr_t         slab;
     ngx_slab_page_t  *next;
+#ifdef NGX_FILC_MODE
+    ngx_slab_page_t  *prev;
+#else
     uintptr_t         prev;
+#endif
 };
 
 

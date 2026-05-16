@@ -134,7 +134,6 @@ fi
 
 rm -rf $NGX_AUTOTEST*
 
-
 cat << END >> $NGX_AUTOCONF_ERR
 [probe-summary] feature="$ngx_feature" compile_found="$ngx_found" requested_run="$ngx_feature_effective_run" effective_run="$ngx_feature_run" filc_override="$ngx_feature_filc_override"
 END

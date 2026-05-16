@@ -65,7 +65,8 @@ typedef volatile ngx_atomic_uint_t  ngx_atomic_t;
 #define ngx_memory_barrier()        __sync_synchronize()
 
 #if ( __i386__ || __i386 || __amd64__ || __amd64 )
-#define ngx_cpu_pause()             __asm__ ("pause")
+/* Fil-C cannot handle inline asm; use compiler builtin for pause */
+#define ngx_cpu_pause()             __builtin_ia32_lfence()
 #else
 #define ngx_cpu_pause()
 #endif
