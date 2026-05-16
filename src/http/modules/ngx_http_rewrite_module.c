@@ -9,6 +9,8 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+#include <stdfil.h>
+
 
 typedef struct {
     ngx_array_t  *codes;        /* uintptr_t */
@@ -409,6 +411,23 @@ ngx_http_rewrite(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         regex->lengths = NULL;
     }
 
+    /* FILC: Cache bit fields and compute regex->next offset before
+     * ngx_http_script_add_code invalidates regex pointer capability.
+     * In FILC's InvisiCap model, pointer arithmetic in ngx_http_script_add_code
+     * changes the pointer's intval but not its capability bounds, making the
+     * pointer unreadable/unwritable after adjustment.
+     * We save the offset from array base and reconstruct the pointer using
+     * zmkptr() to get a pointer with correct capability from the array's elts. */
+    unsigned regex_uri = regex->uri;
+    unsigned regex_args = regex->args;
+    unsigned regex_add_args = regex->add_args;
+    unsigned regex_redirect = regex->redirect;
+    uintptr_t regex_next_offset = (u_char *) lcf->codes->elts + lcf->codes->nelts
+                                                  - (u_char *) regex;
+    /* Save offset from array base for pointer reconstruction */
+    uintptr_t regex_base_offset = (uintptr_t)(u_char *) regex
+                                                  - (uintptr_t)(u_char *) lcf->codes->elts;
+
     regex_end = ngx_http_script_add_code(lcf->codes,
                                       sizeof(ngx_http_script_regex_end_code_t),
                                       &regex);
@@ -417,10 +436,10 @@ ngx_http_rewrite(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     }
 
     regex_end->code = ngx_http_script_regex_end_code;
-    regex_end->uri = regex->uri;
-    regex_end->args = regex->args;
-    regex_end->add_args = regex->add_args;
-    regex_end->redirect = regex->redirect;
+    regex_end->uri = regex_uri;
+    regex_end->args = regex_args;
+    regex_end->add_args = regex_add_args;
+    regex_end->redirect = regex_redirect;
 
     if (last) {
         code = ngx_http_script_add_code(lcf->codes, sizeof(uintptr_t), &regex);
@@ -431,8 +450,14 @@ ngx_http_rewrite(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         *code = NULL;
     }
 
-    regex->next = (u_char *) lcf->codes->elts + lcf->codes->nelts
-                                              - (u_char *) regex;
+    /* FILC: Reconstruct regex pointer with correct capability from array base */
+    {
+        regex = (ngx_http_script_regex_code_t *) zmkptr(
+            lcf->codes->elts,
+            (unsigned long)((u_char *) lcf->codes->elts + regex_base_offset));
+    }
+
+    regex->next = regex_next_offset;
 
     return NGX_CONF_OK;
 }
@@ -628,13 +653,17 @@ ngx_http_rewrite_if(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     }
 
 
-    if (elts != lcf->codes->elts) {
-        if_code = (ngx_http_script_if_code_t *)
-                   ((u_char *) if_code + ((u_char *) lcf->codes->elts - elts));
+if (elts != lcf->codes->elts) {
+        /* FILC: Use zmkptr to reconstruct pointer with correct capability
+         * after array reallocation. Plain pointer arithmetic changes intval
+         * but not capability bounds, making the pointer unusable. */
+        if_code = (ngx_http_script_if_code_t *) zmkptr(
+            lcf->codes->elts,
+            (unsigned long)((u_char *) lcf->codes->elts + ((u_char *) if_code - elts)));
     }
 
     if_code->next = (u_char *) lcf->codes->elts + lcf->codes->nelts
-                                                - (u_char *) if_code;
+                                                 - (u_char *) if_code;
 
     /* the code array belong to parent block */
 
