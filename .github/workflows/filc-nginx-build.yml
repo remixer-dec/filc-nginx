@@ -37,8 +37,8 @@ jobs:
       - name: Get version tag
         id: version
         run: |
-          VERSION="filc-nginx-$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
-          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          echo "tag=filc-nginx-$(date +%Y%m%d)-$SHORT_SHA" >> $GITHUB_OUTPUT
 
       - name: Create release
         uses: softprops/action-gh-release@v2
