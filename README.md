@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/License-BSD%202--Clause-blue.svg)](/LICENSE)
 [![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](/CODE_OF_CONDUCT.md)
 
-This is an experimental proof-of-concept fork of NGINX designed to be built with [https://github.com/pizlonator/fil-c](fil-c) for guaranteed *memory safety*. The project successfully builds and runs (target: Debian 13, distroless). Basic tests pass, more advanced features like QUIC and mail are out of scope for this experiment. Stability is not guaranteed, some targeted requests may result in crashes. Basic tests show no crashes after patches for safer pointer handling applied. Disclaimer: AI-assisted tools like Codex and Opencode were used to make this work.  
+This is an experimental proof-of-concept fork of NGINX designed to be built with [fil-c](https://github.com/pizlonator/fil-c) for guaranteed *memory safety*. The project successfully builds and runs (target: Debian 13, distroless). Basic tests pass, more advanced features like QUIC and mail are out of scope for this experiment. Stability is not guaranteed, some targeted requests may result in crashes. Basic tests show no crashes after patches for safer pointer handling applied. Disclaimer: AI-assisted tools like Codex and Opencode were used to make this work.  
 
 ## Quick start
 
