@@ -1770,6 +1770,7 @@ ngx_http_script_complex_value_code(ngx_http_script_engine_t *e)
     le.line = e->line;
     le.request = e->request;
     le.quote = e->quote;
+    le.is_args = e->is_args;
 
     for (len = 0; *(uintptr_t *) le.ip; len += lcode(&le)) {
         lcode = *(ngx_http_script_len_code_pt *) le.ip;
