@@ -1,11 +1,8 @@
-name: buildbot
+name: build
 
 on:
-  push:
-    branches:
-      - master
-      - 'stable-1.*'
+  workflow_dispatch:
 
 jobs:
-  buildbot:
+  build:
     uses: nginx/ci-self-hosted/.github/workflows/nginx-buildbot.yml@main
