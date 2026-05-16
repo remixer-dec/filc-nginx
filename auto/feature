@@ -13,6 +13,18 @@ checking for $ngx_feature
 END
 
 ngx_found=no
+ngx_feature_effective_run="$ngx_feature_run"
+ngx_feature_filc_override=no
+
+if [ "$NGX_FILC_MODE" = "YES" -a "$ngx_feature_run" = "yes" ]; then
+    case "$ngx_feature" in
+        epoll|sendfile\(\)|sendfile64\(\)|prctl\(PR_SET_DUMPABLE\)|prctl\(PR_SET_KEEPCAPS\)|gcc\ builtin\ atomic\ operations|C99\ variadic\ macros|gcc\ variadic\ macros|mmap\(MAP_ANON\|MAP_SHARED\)|mmap\(\"/dev/zero\",\ MAP_SHARED\)|System\ V\ shared\ memory|POSIX\ semaphores|POSIX\ semaphores\ in\ libpthread|POSIX\ semaphores\ in\ librt)
+            ngx_feature_run=no
+            ngx_feature_effective_run=no
+            ngx_feature_filc_override=yes
+        ;;
+    esac
+fi
 
 if test -n "$ngx_feature_name"; then
     ngx_have_feature=`echo $ngx_feature_name \
@@ -121,3 +133,8 @@ else
 fi
 
 rm -rf $NGX_AUTOTEST*
+
+
+cat << END >> $NGX_AUTOCONF_ERR
+[probe-summary] feature="$ngx_feature" compile_found="$ngx_found" requested_run="$ngx_feature_effective_run" effective_run="$ngx_feature_run" filc_override="$ngx_feature_filc_override"
+END

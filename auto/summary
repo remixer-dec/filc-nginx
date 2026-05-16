@@ -79,4 +79,19 @@ if [ $HTTP_SCGI = YES ]; then
     echo "  nginx http scgi temporary files: \"$NGX_HTTP_SCGI_TEMP_PATH\""
 fi
 
+echo
+echo "Probe results summary"
+
+if [ -f "$NGX_AUTOCONF_ERR" ]; then
+    probe_summary=`sed -n 's/^\[probe-summary\] //p' $NGX_AUTOCONF_ERR`
+    if [ -n "$probe_summary" ]; then
+        echo "$probe_summary"
+    else
+        echo "  (no probe summary entries found)"
+    fi
+else
+    echo "  (autoconf log not found)"
+fi
+
+echo
 echo "$NGX_POST_CONF_MSG"
