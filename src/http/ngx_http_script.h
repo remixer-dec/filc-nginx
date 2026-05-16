@@ -211,7 +211,7 @@ typedef struct {
     ngx_http_script_code_pt     code;
     uintptr_t                   value;
     uintptr_t                   text_len;
-    uintptr_t                   text_data;
+    u_char                     *text_data;
 } ngx_http_script_value_code_t;
 
 
@@ -275,26 +275,19 @@ void ngx_http_script_nop_code(ngx_http_script_engine_t *e);
 
 /*
  * Fil-C compatibility helpers: safely dispatch script bytecode function pointers.
- * In Fil-C's capability model, casting a nonzero integer to a function pointer
- * may produce a null-capability pointer. These helpers detect that case and
- * return an error before the invalid call.
+ * In Fil-C's capability model, function pointers are capabilities wider than
+ * uintptr_t. Reading them as uintptr_t may yield wrong data. Instead, read
+ * them directly as function pointers and check for NULL (the sentinel).
  */
 
 static ngx_inline ngx_int_t
 ngx_http_script_get_code(ngx_http_script_engine_t *e,
     ngx_http_script_code_pt *code)
 {
-    if (*(uintptr_t *) e->ip == 0) {
-        *code = NULL;
-        return NGX_DONE;
-    }
-
     *code = *(ngx_http_script_code_pt *) e->ip;
 
     if (*code == NULL) {
-        ngx_log_error(NGX_LOG_ERR, e->request->connection->log, 0,
-                      "http script invalid function pointer at %p", e->ip);
-        return NGX_ERROR;
+        return NGX_DONE;
     }
 
     return NGX_OK;
@@ -305,18 +298,10 @@ static ngx_inline ngx_int_t
 ngx_http_script_get_len_code(ngx_http_script_engine_t *e,
     ngx_http_script_len_code_pt *code)
 {
-    if (*(uintptr_t *) e->ip == 0) {
-        *code = NULL;
-        return NGX_DONE;
-    }
-
     *code = *(ngx_http_script_len_code_pt *) e->ip;
 
     if (*code == NULL) {
-        ngx_log_error(NGX_LOG_ERR, e->request->connection->log, 0,
-                      "http script invalid length function pointer at %p",
-                      e->ip);
-        return NGX_ERROR;
+        return NGX_DONE;
     }
 
     return NGX_OK;

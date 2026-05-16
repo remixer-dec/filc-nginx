@@ -29,7 +29,7 @@ static void ngx_http_script_full_name_code(ngx_http_script_engine_t *e);
 
 #define ngx_http_script_exit  (u_char *) &ngx_http_script_exit_code
 
-static uintptr_t ngx_http_script_exit_code = (uintptr_t) NULL;
+static ngx_http_script_ptr_code_t ngx_http_script_exit_code = { NULL };
 
 
 void
@@ -1897,7 +1897,7 @@ ngx_http_script_value_code(ngx_http_script_engine_t *e)
     e->ip += sizeof(ngx_http_script_value_code_t);
 
     e->sp->len = code->text_len;
-    e->sp->data = (u_char *) code->text_data;
+    e->sp->data = code->text_data;
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
                    "http script value: \"%v\"", e->sp);

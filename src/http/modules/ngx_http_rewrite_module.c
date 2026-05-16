@@ -1034,7 +1034,7 @@ ngx_http_rewrite_value(ngx_conf_t *cf, ngx_http_rewrite_loc_conf_t *lcf,
         val->code = ngx_http_script_value_code;
         val->value = (uintptr_t) n;
         val->text_len = (uintptr_t) value->len;
-        val->text_data = (uintptr_t) value->data;
+        val->text_data = value->data;
 
         return NGX_CONF_OK;
     }
