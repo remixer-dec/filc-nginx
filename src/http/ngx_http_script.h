@@ -89,6 +89,14 @@ typedef struct {
 typedef void (*ngx_http_script_code_pt) (ngx_http_script_engine_t *e);
 typedef size_t (*ngx_http_script_len_code_pt) (ngx_http_script_engine_t *e);
 
+typedef struct {
+    ngx_http_script_code_pt     code;
+} ngx_http_script_ptr_code_t;
+
+typedef struct {
+    ngx_http_script_len_code_pt code;
+} ngx_http_script_len_ptr_code_t;
+
 
 typedef struct {
     ngx_http_script_code_pt     code;
@@ -265,5 +273,53 @@ void ngx_http_script_var_set_handler_code(ngx_http_script_engine_t *e);
 void ngx_http_script_var_code(ngx_http_script_engine_t *e);
 void ngx_http_script_nop_code(ngx_http_script_engine_t *e);
 
+/*
+ * Fil-C compatibility helpers: safely dispatch script bytecode function pointers.
+ * In Fil-C's capability model, casting a nonzero integer to a function pointer
+ * may produce a null-capability pointer. These helpers detect that case and
+ * return an error before the invalid call.
+ */
+
+static ngx_inline ngx_int_t
+ngx_http_script_get_code(ngx_http_script_engine_t *e,
+    ngx_http_script_code_pt *code)
+{
+    if (*(uintptr_t *) e->ip == 0) {
+        *code = NULL;
+        return NGX_DONE;
+    }
+
+    *code = *(ngx_http_script_code_pt *) e->ip;
+
+    if (*code == NULL) {
+        ngx_log_error(NGX_LOG_ERR, e->request->connection->log, 0,
+                      "http script invalid function pointer at %p", e->ip);
+        return NGX_ERROR;
+    }
+
+    return NGX_OK;
+}
+
+
+static ngx_inline ngx_int_t
+ngx_http_script_get_len_code(ngx_http_script_engine_t *e,
+    ngx_http_script_len_code_pt *code)
+{
+    if (*(uintptr_t *) e->ip == 0) {
+        *code = NULL;
+        return NGX_DONE;
+    }
+
+    *code = *(ngx_http_script_len_code_pt *) e->ip;
+
+    if (*code == NULL) {
+        ngx_log_error(NGX_LOG_ERR, e->request->connection->log, 0,
+                      "http script invalid length function pointer at %p",
+                      e->ip);
+        return NGX_ERROR;
+    }
+
+    return NGX_OK;
+}
 
 #endif /* _NGX_HTTP_SCRIPT_H_INCLUDED_ */

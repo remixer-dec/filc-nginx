@@ -1269,9 +1269,22 @@ ngx_http_proxy_create_request(ngx_http_request_t *r)
         le.flushed = 1;
         body_len = 0;
 
-        while (*(uintptr_t *) le.ip) {
-            lcode = *(ngx_http_script_len_code_pt *) le.ip;
-            body_len += lcode(&le);
+        {
+            ngx_int_t  rc;
+
+            for ( ;; ) {
+                rc = ngx_http_script_get_len_code(&le, &lcode);
+
+                if (rc == NGX_DONE) {
+                    break;
+                }
+
+                if (rc == NGX_ERROR) {
+                    return NGX_ERROR;
+                }
+
+                body_len += lcode(&le);
+            }
         }
 
         ctx->internal_body_length = body_len;
@@ -1289,21 +1302,43 @@ ngx_http_proxy_create_request(ngx_http_request_t *r)
     le.request = r;
     le.flushed = 1;
 
-    while (*(uintptr_t *) le.ip) {
+    {
+        ngx_int_t  rc;
 
-        lcode = *(ngx_http_script_len_code_pt *) le.ip;
-        key_len = lcode(&le);
+        for ( ;; ) {
+            rc = ngx_http_script_get_len_code(&le, &lcode);
 
-        for (val_len = 0; *(uintptr_t *) le.ip; val_len += lcode(&le)) {
-            lcode = *(ngx_http_script_len_code_pt *) le.ip;
+            if (rc == NGX_DONE) {
+                break;
+            }
+
+            if (rc == NGX_ERROR) {
+                return NGX_ERROR;
+            }
+
+            key_len = lcode(&le);
+
+            for (val_len = 0; ; ) {
+                rc = ngx_http_script_get_len_code(&le, &lcode);
+
+                if (rc == NGX_DONE) {
+                    break;
+                }
+
+                if (rc == NGX_ERROR) {
+                    return NGX_ERROR;
+                }
+
+                val_len += lcode(&le);
+            }
+            le.ip += sizeof(ngx_http_script_len_ptr_code_t);
+
+            if (val_len == 0) {
+                continue;
+            }
+
+            len += key_len + sizeof(": ") - 1 + val_len + sizeof(CRLF) - 1;
         }
-        le.ip += sizeof(uintptr_t);
-
-        if (val_len == 0) {
-            continue;
-        }
-
-        len += key_len + sizeof(": ") - 1 + val_len + sizeof(CRLF) - 1;
     }
 
 
@@ -1402,42 +1437,97 @@ ngx_http_proxy_create_request(ngx_http_request_t *r)
 
     le.ip = headers->lengths->elts;
 
-    while (*(uintptr_t *) le.ip) {
+    {
+        ngx_int_t  rc;
 
-        lcode = *(ngx_http_script_len_code_pt *) le.ip;
-        (void) lcode(&le);
+        for ( ;; ) {
+            rc = ngx_http_script_get_len_code(&le, &lcode);
 
-        for (val_len = 0; *(uintptr_t *) le.ip; val_len += lcode(&le)) {
-            lcode = *(ngx_http_script_len_code_pt *) le.ip;
-        }
-        le.ip += sizeof(uintptr_t);
+            if (rc == NGX_DONE) {
+                break;
+            }
 
-        if (val_len == 0) {
-            e.skip = 1;
+            if (rc == NGX_ERROR) {
+                return NGX_ERROR;
+            }
 
-            while (*(uintptr_t *) e.ip) {
-                code = *(ngx_http_script_code_pt *) e.ip;
+            (void) lcode(&le);
+
+            for (val_len = 0; ; ) {
+                rc = ngx_http_script_get_len_code(&le, &lcode);
+
+                if (rc == NGX_DONE) {
+                    break;
+                }
+
+                if (rc == NGX_ERROR) {
+                    return NGX_ERROR;
+                }
+
+                val_len += lcode(&le);
+            }
+            le.ip += sizeof(ngx_http_script_len_ptr_code_t);
+
+            if (val_len == 0) {
+                e.skip = 1;
+
+                {
+                    ngx_int_t  inner_rc;
+
+                    for ( ;; ) {
+                        inner_rc = ngx_http_script_get_code(&e, &code);
+
+                        if (inner_rc == NGX_DONE) {
+                            break;
+                        }
+
+                        if (inner_rc == NGX_ERROR) {
+                            return NGX_ERROR;
+                        }
+
+                        code((ngx_http_script_engine_t *) &e);
+                    }
+                }
+                e.ip += sizeof(ngx_http_script_ptr_code_t);
+
+                e.skip = 0;
+
+                continue;
+            }
+
+            {
+                ngx_int_t  inner_rc;
+
+                inner_rc = ngx_http_script_get_code(&e, &code);
+                if (inner_rc == NGX_DONE || inner_rc == NGX_ERROR) {
+                    return NGX_ERROR;
+                }
                 code((ngx_http_script_engine_t *) &e);
             }
-            e.ip += sizeof(uintptr_t);
 
-            e.skip = 0;
+            *e.pos++ = ':'; *e.pos++ = ' ';
 
-            continue;
+            {
+                ngx_int_t  inner_rc;
+
+                for ( ;; ) {
+                    inner_rc = ngx_http_script_get_code(&e, &code);
+
+                    if (inner_rc == NGX_DONE) {
+                        break;
+                    }
+
+                    if (inner_rc == NGX_ERROR) {
+                        return NGX_ERROR;
+                    }
+
+                    code((ngx_http_script_engine_t *) &e);
+                }
+            }
+            e.ip += sizeof(ngx_http_script_ptr_code_t);
+
+            *e.pos++ = CR; *e.pos++ = LF;
         }
-
-        code = *(ngx_http_script_code_pt *) e.ip;
-        code((ngx_http_script_engine_t *) &e);
-
-        *e.pos++ = ':'; *e.pos++ = ' ';
-
-        while (*(uintptr_t *) e.ip) {
-            code = *(ngx_http_script_code_pt *) e.ip;
-            code((ngx_http_script_engine_t *) &e);
-        }
-        e.ip += sizeof(uintptr_t);
-
-        *e.pos++ = CR; *e.pos++ = LF;
     }
 
     b->last = e.pos;
@@ -1489,9 +1579,22 @@ ngx_http_proxy_create_request(ngx_http_request_t *r)
         e.pos = b->last;
         e.skip = 0;
 
-        while (*(uintptr_t *) e.ip) {
-            code = *(ngx_http_script_code_pt *) e.ip;
-            code((ngx_http_script_engine_t *) &e);
+        {
+            ngx_int_t  rc;
+
+            for ( ;; ) {
+                rc = ngx_http_script_get_code(&e, &code);
+
+                if (rc == NGX_DONE) {
+                    break;
+                }
+
+                if (rc == NGX_ERROR) {
+                    return NGX_ERROR;
+                }
+
+                code((ngx_http_script_engine_t *) &e);
+            }
         }
 
         b->last = e.pos;
@@ -4125,7 +4228,6 @@ ngx_http_proxy_init_headers(ngx_conf_t *cf, ngx_http_proxy_loc_conf_t *conf,
 {
     u_char                       *p;
     size_t                        size;
-    uintptr_t                    *code;
     ngx_uint_t                    i;
     ngx_array_t                   headers_names, headers_merged;
     ngx_keyval_t                 *src, *s, *h;
@@ -4257,27 +4359,42 @@ ngx_http_proxy_init_headers(ngx_conf_t *cf, ngx_http_proxy_loc_conf_t *conf,
             return NGX_ERROR;
         }
 
-        code = ngx_array_push_n(headers->lengths, sizeof(uintptr_t));
-        if (code == NULL) {
+        {
+            ngx_http_script_len_ptr_code_t  *lcode;
+
+            lcode = ngx_array_push_n(headers->lengths,
+                                     sizeof(ngx_http_script_len_ptr_code_t));
+            if (lcode == NULL) {
+                return NGX_ERROR;
+            }
+
+            lcode->code = NULL;
+        }
+
+        {
+            ngx_http_script_ptr_code_t  *vcode;
+
+            vcode = ngx_array_push_n(headers->values,
+                                     sizeof(ngx_http_script_ptr_code_t));
+            if (vcode == NULL) {
+                return NGX_ERROR;
+            }
+
+            vcode->code = NULL;
+        }
+    }
+
+    {
+        ngx_http_script_len_ptr_code_t  *lcode;
+
+        lcode = ngx_array_push_n(headers->lengths,
+                                 sizeof(ngx_http_script_len_ptr_code_t));
+        if (lcode == NULL) {
             return NGX_ERROR;
         }
 
-        *code = (uintptr_t) NULL;
-
-        code = ngx_array_push_n(headers->values, sizeof(uintptr_t));
-        if (code == NULL) {
-            return NGX_ERROR;
-        }
-
-        *code = (uintptr_t) NULL;
+        lcode->code = NULL;
     }
-
-    code = ngx_array_push_n(headers->lengths, sizeof(uintptr_t));
-    if (code == NULL) {
-        return NGX_ERROR;
-    }
-
-    *code = (uintptr_t) NULL;
 
 
     hash.hash = &headers->hash;

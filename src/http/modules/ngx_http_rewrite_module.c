@@ -177,8 +177,19 @@ ngx_http_rewrite_handler(ngx_http_request_t *r)
     e->log = rlcf->log;
     e->status = NGX_DECLINED;
 
-    while (*(uintptr_t *) e->ip) {
-        code = *(ngx_http_script_code_pt *) e->ip;
+    for ( ;; ) {
+        ngx_int_t  rc;
+
+        rc = ngx_http_script_get_code(e, &code);
+
+        if (rc == NGX_DONE) {
+            break;
+        }
+
+        if (rc == NGX_ERROR) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
         code(e);
     }
 
@@ -244,7 +255,7 @@ ngx_http_rewrite_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_http_rewrite_loc_conf_t *prev = parent;
     ngx_http_rewrite_loc_conf_t *conf = child;
 
-    uintptr_t  *code;
+    ngx_http_script_ptr_code_t  *code;
 
     ngx_conf_merge_value(conf->log, prev->log, 0);
     ngx_conf_merge_value(conf->uninitialized_variable_warn,
@@ -259,12 +270,12 @@ ngx_http_rewrite_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
         return NGX_CONF_OK;
     }
 
-    code = ngx_array_push_n(conf->codes, sizeof(uintptr_t));
+    code = ngx_array_push_n(conf->codes, sizeof(ngx_http_script_ptr_code_t));
     if (code == NULL) {
         return NGX_CONF_ERROR;
     }
 
-    *code = (uintptr_t) NULL;
+    code->code = NULL;
 
     return NGX_CONF_OK;
 }
@@ -304,7 +315,6 @@ ngx_http_rewrite(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     ngx_str_t                         *value;
     ngx_uint_t                         last;
     ngx_regex_compile_t                rc;
-    ngx_http_script_code_pt           *code;
     ngx_http_script_compile_t          sc;
     ngx_http_script_regex_code_t      *regex;
     ngx_http_script_regex_end_code_t  *regex_end;
@@ -419,14 +429,12 @@ ngx_http_rewrite(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
      * We save the offset from array base and reconstruct the pointer using
      * zmkptr() to get a pointer with correct capability from the array's elts. */
     unsigned regex_uri = regex->uri;
-    unsigned regex_args = regex->args;
-    unsigned regex_add_args = regex->add_args;
-    unsigned regex_redirect = regex->redirect;
-    uintptr_t regex_next_offset = (u_char *) lcf->codes->elts + lcf->codes->nelts
-                                                  - (u_char *) regex;
-    /* Save offset from array base for pointer reconstruction */
-    uintptr_t regex_base_offset = (uintptr_t)(u_char *) regex
-                                                  - (uintptr_t)(u_char *) lcf->codes->elts;
+     unsigned regex_args = regex->args;
+     unsigned regex_add_args = regex->add_args;
+     unsigned regex_redirect = regex->redirect;
+     /* Save offset from array base for pointer reconstruction */
+     uintptr_t regex_base_offset = (uintptr_t)(u_char *) regex
+                                                   - (uintptr_t)(u_char *) lcf->codes->elts;
 
     regex_end = ngx_http_script_add_code(lcf->codes,
                                       sizeof(ngx_http_script_regex_end_code_t),
@@ -442,12 +450,15 @@ ngx_http_rewrite(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     regex_end->redirect = regex_redirect;
 
     if (last) {
-        code = ngx_http_script_add_code(lcf->codes, sizeof(uintptr_t), &regex);
-        if (code == NULL) {
+        ngx_http_script_ptr_code_t  *last_code;
+
+        last_code = ngx_http_script_add_code(lcf->codes,
+                                             sizeof(ngx_http_script_ptr_code_t), &regex);
+        if (last_code == NULL) {
             return NGX_CONF_ERROR;
         }
 
-        *code = NULL;
+        last_code->code = NULL;
     }
 
     /* FILC: Reconstruct regex pointer with correct capability from array base */
@@ -457,7 +468,8 @@ ngx_http_rewrite(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
             (unsigned long)((u_char *) lcf->codes->elts + regex_base_offset));
     }
 
-    regex->next = regex_next_offset;
+    regex->next = (u_char *) lcf->codes->elts + lcf->codes->nelts
+                  - (u_char *) regex;
 
     return NGX_CONF_OK;
 }
@@ -540,14 +552,15 @@ ngx_http_rewrite_break(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
     ngx_http_rewrite_loc_conf_t *lcf = conf;
 
-    ngx_http_script_code_pt  *code;
+    ngx_http_script_ptr_code_t  *pc;
 
-    code = ngx_http_script_start_code(cf->pool, &lcf->codes, sizeof(uintptr_t));
-    if (code == NULL) {
+    pc = ngx_http_script_start_code(cf->pool, &lcf->codes,
+                                    sizeof(ngx_http_script_ptr_code_t));
+    if (pc == NULL) {
         return NGX_CONF_ERROR;
     }
 
-    *code = ngx_http_script_break_code;
+    pc->code = ngx_http_script_break_code;
 
     return NGX_CONF_OK;
 }
@@ -681,7 +694,6 @@ ngx_http_rewrite_if_condition(ngx_conf_t *cf, ngx_http_rewrite_loc_conf_t *lcf)
     ngx_str_t                     *value;
     ngx_uint_t                     cur, last;
     ngx_regex_compile_t            rc;
-    ngx_http_script_code_pt       *code;
     ngx_http_script_file_code_t   *fop;
     ngx_http_script_regex_code_t  *regex;
     u_char                         errstr[NGX_MAX_CONF_ERRSTR];
@@ -748,13 +760,15 @@ ngx_http_rewrite_if_condition(ngx_conf_t *cf, ngx_http_rewrite_loc_conf_t *lcf)
                 return NGX_CONF_ERROR;
             }
 
-            code = ngx_http_script_start_code(cf->pool, &lcf->codes,
-                                              sizeof(uintptr_t));
-            if (code == NULL) {
+            ngx_http_script_ptr_code_t  *pc;
+
+            pc = ngx_http_script_start_code(cf->pool, &lcf->codes,
+                                              sizeof(ngx_http_script_ptr_code_t));
+            if (pc == NULL) {
                 return NGX_CONF_ERROR;
             }
 
-            *code = ngx_http_script_equal_code;
+            pc->code = ngx_http_script_equal_code;
 
             return NGX_CONF_OK;
         }
@@ -765,13 +779,15 @@ ngx_http_rewrite_if_condition(ngx_conf_t *cf, ngx_http_rewrite_loc_conf_t *lcf)
                 return NGX_CONF_ERROR;
             }
 
-            code = ngx_http_script_start_code(cf->pool, &lcf->codes,
-                                              sizeof(uintptr_t));
-            if (code == NULL) {
+            ngx_http_script_ptr_code_t  *pc;
+
+            pc = ngx_http_script_start_code(cf->pool, &lcf->codes,
+                                            sizeof(ngx_http_script_ptr_code_t));
+            if (pc == NULL) {
                 return NGX_CONF_ERROR;
             }
 
-            *code = ngx_http_script_not_equal_code;
+            pc->code = ngx_http_script_not_equal_code;
             return NGX_CONF_OK;
         }
 

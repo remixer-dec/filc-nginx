@@ -149,9 +149,22 @@ ngx_http_index_handler(ngx_http_request_t *r)
             /* 1 is for terminating '\0' as in static names */
             len = 1;
 
-            while (*(uintptr_t *) e.ip) {
-                lcode = *(ngx_http_script_len_code_pt *) e.ip;
-                len += lcode(&e);
+            {
+                ngx_int_t  rc;
+
+                for ( ;; ) {
+                    rc = ngx_http_script_get_len_code(&e, &lcode);
+
+                    if (rc == NGX_DONE) {
+                        break;
+                    }
+
+                    if (rc == NGX_ERROR) {
+                        return NGX_ERROR;
+                    }
+
+                    len += lcode(&e);
+                }
             }
 
             /* 16 bytes are preallocation */
@@ -181,9 +194,22 @@ ngx_http_index_handler(ngx_http_request_t *r)
             e.ip = index[i].values->elts;
             e.pos = name;
 
-            while (*(uintptr_t *) e.ip) {
-                code = *(ngx_http_script_code_pt *) e.ip;
-                code((ngx_http_script_engine_t *) &e);
+            {
+                ngx_int_t  rc;
+
+                for ( ;; ) {
+                    rc = ngx_http_script_get_code(&e, &code);
+
+                    if (rc == NGX_DONE) {
+                        break;
+                    }
+
+                    if (rc == NGX_ERROR) {
+                        return NGX_ERROR;
+                    }
+
+                    code((ngx_http_script_engine_t *) &e);
+                }
             }
 
             if (*name == '/') {
