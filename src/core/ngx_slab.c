@@ -10,19 +10,26 @@
 #ifdef NGX_FILC_MODE
 #include <stdfil.h>
 
-/* In Fil-C mode, prev is a pointer type - use zorptr/zandptr for type tagging */
-#define ngx_slab_set_prev(page, ptr, type)                                    \
-    do { (page)->prev = (ngx_slab_page_t *) zorptr((void *)(ptr), (type)); } while (0)
-#define ngx_slab_get_prev(page)                                               \
-    ((ngx_slab_page_t *) zandptr((page)->prev, ~NGX_SLAB_PAGE_MASK))
+/*
+ * In Fil-C mode, prev stores an OFFSET from pool (plus type bits).
+ * This avoids the InvisiCap problem: pointers stored in shared memory
+ * and read back have null capability. By storing offsets and reconstructing
+ * as (pool + offset), the result inherits pool's valid capability.
+ */
+#define ngx_slab_set_prev(pool, page, ptr, type)                              \
+    do { (page)->prev = (ngx_slab_page_t *)                                  \
+        ((((unsigned long)(ptr) - (unsigned long)(pool)) >> 2) | (type)); } while (0)
+#define ngx_slab_get_prev(pool, page)                                         \
+    ((ngx_slab_page_t *)((char *)(pool) +                                    \
+                         (((unsigned long)(page)->prev & ~NGX_SLAB_PAGE_MASK) << 2)))
 #define ngx_slab_get_type(page)                                               \
-    ((unsigned long)(page)->prev & NGX_SLAB_PAGE_MASK)
+    (((unsigned long)(page)->prev) & NGX_SLAB_PAGE_MASK)
 
 #else
 
-#define ngx_slab_set_prev(page, ptr, type)                                    \
+#define ngx_slab_set_prev(pool, page, ptr, type)                                    \
     do { (page)->prev = (uintptr_t)(ptr) | (type); } while (0)
-#define ngx_slab_get_prev(page)                                               \
+#define ngx_slab_get_prev(pool, page)                                         \
     ((ngx_slab_page_t *)((page)->prev & ~NGX_SLAB_PAGE_MASK))
 #define ngx_slab_get_type(page)                                               \
     ((page)->prev & NGX_SLAB_PAGE_MASK)
@@ -73,15 +80,27 @@
 #endif
 
 #ifdef NGX_FILC_MODE
-#define ngx_slab_page_prev(page)   ngx_slab_get_prev(page)
+#define ngx_slab_page_prev(pool, page)   ngx_slab_get_prev(pool, page)
 #else
-#define ngx_slab_page_prev(page)                                              \
+#define ngx_slab_page_prev(pool, page)                                        \
     (ngx_slab_page_t *) ((page)->prev & ~NGX_SLAB_PAGE_MASK)
 #endif
 
+#ifdef NGX_FILC_MODE
+#define ngx_slab_page_addr(pool, page)                                        \
+    ((uintptr_t)((char *)(pool) +                                             \
+                 ((unsigned long)(pool)->start - (unsigned long)(pool)) +      \
+                 ((((unsigned long)(page) - (unsigned long)(pool)->pages) /    \
+                   sizeof(ngx_slab_page_t)) << ngx_pagesize_shift)))
+#define ngx_slab_ptr(pool, p)                                                 \
+    ((p) ? (void *)((char *)(pool) + ((p) - (unsigned long)(pool))) : NULL)
+#else
 #define ngx_slab_page_addr(pool, page)                                        \
     ((((page) - (pool)->pages) << ngx_pagesize_shift)                         \
      + (uintptr_t) (pool)->start)
+#define ngx_slab_ptr(pool, p)                                                 \
+    (void *)(p)
+#endif
 
 
 #if (NGX_DEBUG_MALLOC)
@@ -175,7 +194,7 @@ ngx_slab_init(ngx_slab_pool_t *pool)
 
     page->slab = pages;
     page->next = &pool->free;
-    ngx_slab_set_prev(page, &pool->free, 0);
+    ngx_slab_set_prev(pool, page, &pool->free, 0);
 
     pool->start = ngx_align_ptr(p + pages * sizeof(ngx_slab_page_t),
                                 ngx_pagesize);
@@ -285,12 +304,12 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
                                 }
                             }
 
-                            prev = ngx_slab_get_prev(page);
+                            prev = ngx_slab_get_prev(pool, page);
                             prev->next = page->next;
-                            ngx_slab_set_prev(page->next, prev, ngx_slab_get_type(page));
+                            ngx_slab_set_prev(pool, page->next, prev, ngx_slab_get_type(page));
 
                             page->next = NULL;
-                            ngx_slab_set_prev(page, NULL, NGX_SLAB_SMALL);
+                            ngx_slab_set_prev(pool, page, NULL, NGX_SLAB_SMALL);
                         }
 
                         goto done;
@@ -308,12 +327,12 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
                 page->slab |= m;
 
                 if (page->slab == NGX_SLAB_BUSY) {
-                    prev = ngx_slab_get_prev(page);
+                    prev = ngx_slab_get_prev(pool, page);
                     prev->next = page->next;
-                    ngx_slab_set_prev(page->next, prev, ngx_slab_get_type(page));
+                    ngx_slab_set_prev(pool, page->next, prev, ngx_slab_get_type(page));
 
                     page->next = NULL;
-                    ngx_slab_set_prev(page, NULL, NGX_SLAB_EXACT);
+                    ngx_slab_set_prev(pool, page, NULL, NGX_SLAB_EXACT);
                 }
 
                 p = ngx_slab_page_addr(pool, page) + (i << shift);
@@ -339,12 +358,12 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
                 page->slab |= m;
 
                 if ((page->slab & NGX_SLAB_MAP_MASK) == mask) {
-                    prev = ngx_slab_get_prev(page);
+                    prev = ngx_slab_get_prev(pool, page);
                     prev->next = page->next;
-                    ngx_slab_set_prev(page->next, prev, ngx_slab_get_type(page));
+                    ngx_slab_set_prev(pool, page->next, prev, ngx_slab_get_type(page));
 
                     page->next = NULL;
-                    ngx_slab_set_prev(page, NULL, NGX_SLAB_BIG);
+                    ngx_slab_set_prev(pool, page, NULL, NGX_SLAB_BIG);
                 }
 
                 p = ngx_slab_page_addr(pool, page) + (i << shift);
@@ -388,7 +407,7 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
 
             page->slab = shift;
             page->next = &slots[slot];
-            ngx_slab_set_prev(page, &slots[slot], NGX_SLAB_SMALL);
+            ngx_slab_set_prev(pool, page, &slots[slot], NGX_SLAB_SMALL);
 
             slots[slot].next = page;
 
@@ -404,7 +423,7 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
 
             page->slab = 1;
             page->next = &slots[slot];
-            ngx_slab_set_prev(page, &slots[slot], NGX_SLAB_EXACT);
+            ngx_slab_set_prev(pool, page, &slots[slot], NGX_SLAB_EXACT);
 
             slots[slot].next = page;
 
@@ -420,7 +439,7 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
 
             page->slab = ((uintptr_t) 1 << NGX_SLAB_MAP_SHIFT) | shift;
             page->next = &slots[slot];
-            ngx_slab_set_prev(page, &slots[slot], NGX_SLAB_BIG);
+            ngx_slab_set_prev(pool, page, &slots[slot], NGX_SLAB_BIG);
 
             slots[slot].next = page;
 
@@ -443,7 +462,7 @@ done:
     ngx_log_debug1(NGX_LOG_DEBUG_ALLOC, ngx_cycle->log, 0,
                    "slab alloc: %p", (void *) p);
 
-    return (void *) p;
+    return ngx_slab_ptr(pool, p);
 }
 
 
@@ -533,8 +552,8 @@ ngx_slab_free_locked(ngx_slab_pool_t *pool, void *p)
                 page->next = slots[slot].next;
                 slots[slot].next = page;
 
-                ngx_slab_set_prev(page, &slots[slot], NGX_SLAB_SMALL);
-                ngx_slab_set_prev(page->next, page, NGX_SLAB_SMALL);
+                ngx_slab_set_prev(pool, page, &slots[slot], NGX_SLAB_SMALL);
+                ngx_slab_set_prev(pool, page->next, page, NGX_SLAB_SMALL);
             }
 
             bitmap[n] &= ~m;
@@ -588,8 +607,8 @@ ngx_slab_free_locked(ngx_slab_pool_t *pool, void *p)
                 page->next = slots[slot].next;
                 slots[slot].next = page;
 
-                ngx_slab_set_prev(page, &slots[slot], NGX_SLAB_EXACT);
-                ngx_slab_set_prev(page->next, page, NGX_SLAB_EXACT);
+                ngx_slab_set_prev(pool, page, &slots[slot], NGX_SLAB_EXACT);
+                ngx_slab_set_prev(pool, page->next, page, NGX_SLAB_EXACT);
             }
 
             page->slab &= ~m;
@@ -628,8 +647,8 @@ ngx_slab_free_locked(ngx_slab_pool_t *pool, void *p)
                 page->next = slots[slot].next;
                 slots[slot].next = page;
 
-                ngx_slab_set_prev(page, &slots[slot], NGX_SLAB_BIG);
-                ngx_slab_set_prev(page->next, page, NGX_SLAB_BIG);
+                ngx_slab_set_prev(pool, page, &slots[slot], NGX_SLAB_BIG);
+                ngx_slab_set_prev(pool, page->next, page, NGX_SLAB_BIG);
             }
 
             page->slab &= ~m;
@@ -714,25 +733,25 @@ ngx_slab_alloc_pages(ngx_slab_pool_t *pool, ngx_uint_t pages)
         if (page->slab >= pages) {
 
             if (page->slab > pages) {
-                ngx_slab_set_prev(&page[page->slab - 1], &page[pages], 0);
+                ngx_slab_set_prev(pool, &page[page->slab - 1], &page[pages], 0);
 
                 page[pages].slab = page->slab - pages;
                 page[pages].next = page->next;
-                page[pages].prev = page->prev;
+                ngx_slab_set_prev(pool, &page[pages], ngx_slab_get_prev(pool, page), 0);
 
-                p = ngx_slab_get_prev(page);
+                p = ngx_slab_get_prev(pool, page);
                 p->next = &page[pages];
-                ngx_slab_set_prev(page->next, &page[pages], 0);
+                ngx_slab_set_prev(pool, page->next, &page[pages], 0);
 
             } else {
-                p = ngx_slab_get_prev(page);
+                p = ngx_slab_get_prev(pool, page);
                 p->next = page->next;
-                page->next->prev = page->prev;
+                ngx_slab_set_prev(pool, page->next, ngx_slab_get_prev(pool, page), 0);
             }
 
             page->slab = pages | NGX_SLAB_PAGE_START;
             page->next = NULL;
-            ngx_slab_set_prev(page, NULL, NGX_SLAB_PAGE);
+            ngx_slab_set_prev(pool, page, NULL, NGX_SLAB_PAGE);
 
             pool->pfree -= pages;
 
@@ -743,7 +762,7 @@ ngx_slab_alloc_pages(ngx_slab_pool_t *pool, ngx_uint_t pages)
             for (p = page + 1; pages; pages--) {
                 p->slab = NGX_SLAB_PAGE_BUSY;
                 p->next = NULL;
-                ngx_slab_set_prev(p, NULL, NGX_SLAB_PAGE);
+                ngx_slab_set_prev(pool, p, NULL, NGX_SLAB_PAGE);
                 p++;
             }
 
@@ -774,10 +793,10 @@ ngx_slab_free_pages(ngx_slab_pool_t *pool, ngx_slab_page_t *page,
         ngx_memzero(&page[1], pages * sizeof(ngx_slab_page_t));
     }
 
-    if (page->next) {
-        prev = ngx_slab_get_prev(page);
+   if (page->next) {
+        prev = ngx_slab_get_prev(pool, page);
         prev->next = page->next;
-        ngx_slab_set_prev(page->next, prev, ngx_slab_get_type(page));
+        ngx_slab_set_prev(pool, page->next, prev, ngx_slab_get_type(page));
     }
 
     join = page + page->slab;
@@ -790,13 +809,13 @@ ngx_slab_free_pages(ngx_slab_pool_t *pool, ngx_slab_page_t *page,
                 pages += join->slab;
                 page->slab += join->slab;
 
-                prev = ngx_slab_get_prev(join);
+                prev = ngx_slab_get_prev(pool, join);
                 prev->next = join->next;
-                ngx_slab_set_prev(join->next, prev, ngx_slab_get_type(join));
+                ngx_slab_set_prev(pool, join->next, prev, ngx_slab_get_type(join));
 
                 join->slab = NGX_SLAB_PAGE_FREE;
                 join->next = NULL;
-                ngx_slab_set_prev(join, NULL, NGX_SLAB_PAGE);
+                ngx_slab_set_prev(pool, join, NULL, NGX_SLAB_PAGE);
             }
         }
     }
@@ -807,20 +826,20 @@ ngx_slab_free_pages(ngx_slab_pool_t *pool, ngx_slab_page_t *page,
         if (ngx_slab_page_type(join) == NGX_SLAB_PAGE) {
 
             if (join->slab == NGX_SLAB_PAGE_FREE) {
-                join = ngx_slab_get_prev(join);
+                join = ngx_slab_get_prev(pool, join);
             }
 
             if (join->next != NULL) {
                 pages += join->slab;
                 join->slab += page->slab;
 
-                prev = ngx_slab_get_prev(join);
+                prev = ngx_slab_get_prev(pool, join);
                 prev->next = join->next;
-                ngx_slab_set_prev(join->next, prev, ngx_slab_get_type(join));
+                ngx_slab_set_prev(pool, join->next, prev, ngx_slab_get_type(join));
 
                 page->slab = NGX_SLAB_PAGE_FREE;
                 page->next = NULL;
-                ngx_slab_set_prev(page, NULL, NGX_SLAB_PAGE);
+                ngx_slab_set_prev(pool, page, NULL, NGX_SLAB_PAGE);
 
                 page = join;
             }
@@ -828,13 +847,13 @@ ngx_slab_free_pages(ngx_slab_pool_t *pool, ngx_slab_page_t *page,
     }
 
     if (pages) {
-        ngx_slab_set_prev(&page[pages], page, 0);
+        ngx_slab_set_prev(pool, &page[pages], page, 0);
     }
 
-    ngx_slab_set_prev(page, &pool->free, 0);
+    ngx_slab_set_prev(pool, page, &pool->free, 0);
     page->next = pool->free.next;
 
-    ngx_slab_set_prev(page->next, page, 0);
+    ngx_slab_set_prev(pool, page->next, page, 0);
 
     pool->free.next = page;
 }

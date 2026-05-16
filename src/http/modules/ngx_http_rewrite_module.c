@@ -414,6 +414,14 @@ ngx_http_rewrite(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     regex = sc.main;
 
+    /* FILC: sc.main's intval may have been updated by array reallocation
+     * inside ngx_http_script_compile, but capability bounds are stale.
+     * Reconstruct from lcf->codes->elts so writes below are within bounds. */
+    regex = (ngx_http_script_regex_code_t *) zmkptr(
+        lcf->codes->elts,
+        (unsigned long)((u_char *) lcf->codes->elts +
+                        ((u_char *) sc.main - (u_char *) lcf->codes->elts)));
+
     regex->size = sc.size;
     regex->args = sc.args;
 
