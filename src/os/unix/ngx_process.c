@@ -603,6 +603,34 @@ ngx_unlock_mutexes(ngx_pid_t pid)
             ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0,
                           "shared memory zone \"%V\" was locked by %P",
                           &shm_zone[i].shm.name, pid);
+
+            if (shm_zone[i].shm.name.len == sizeof("SSL") - 1
+                && ngx_strncmp(shm_zone[i].shm.name.data,
+                               (u_char *) "SSL",
+                               sizeof("SSL") - 1) == 0)
+            {
+                ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0,
+                              "reinitializing shared memory zone \"%V\" "
+                              "after abnormal worker exit",
+                              &shm_zone[i].shm.name);
+
+                ngx_slab_init(sp);
+
+                /*
+                 * Rebuild zone payload after slab reset.
+                 * SSL session cache keeps zone-specific structures in shm,
+                 * so resetting allocator alone is not sufficient.
+                 */
+                shm_zone[i].data = NULL;
+                sp->data = NULL;
+
+                if (shm_zone[i].init(&shm_zone[i], NULL) != NGX_OK) {
+                    ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0,
+                                  "reinitialization of shared memory zone "
+                                  "\"%V\" failed",
+                                  &shm_zone[i].shm.name);
+                }
+            }
         }
     }
 }
