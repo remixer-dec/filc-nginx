@@ -55,7 +55,7 @@ jobs:
 
       - name: Build filc dependencies from prebuilt optfil toolchain
         env:
-          FILC_ROOT: /opt/filc
+          FILC_ROOT: /opt/fil
           DEPS_DIR: /tmp/filc-deps
         run: bash scripts/build-filc-deps.sh
 

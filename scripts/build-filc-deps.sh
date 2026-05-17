@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FILC_ROOT="${FILC_ROOT:-/opt/filc}"
+FILC_ROOT="${FILC_ROOT:-/opt/fil}"
 DEPS_DIR="${DEPS_DIR:-$ROOT_DIR/.filc-deps}"
 SRC_DIR="$DEPS_DIR/src"
 PREFIX_DIR="${PREFIX_DIR:-$DEPS_DIR/prefix}"
@@ -30,7 +30,7 @@ ensure_optfil() {
   local archive="$DEPS_DIR/optfil.tar.xz"
   local extract_dir="$DEPS_DIR/optfil"
 
-  if [ -x "$FILC_ROOT/build/bin/filcc" ] || [ -x "$FILC_ROOT/bin/filc" ]; then
+  if [ -x "$FILC_ROOT/build/bin/filcc" ] || [ -x "$FILC_ROOT/bin/filc" ] || [ -x /opt/fil/bin/filc ]; then
     echo "Using preinstalled Fil-C tools from $FILC_ROOT"
     return
   fi
@@ -49,8 +49,8 @@ ensure_optfil() {
   local optfil_root
   optfil_root="$(cd "$(dirname "$setup_sh")" && pwd)"
   echo "Installing optfil from $optfil_root"
-  # setup.sh is interactive; force non-interactive confirmation for CI.
-  (cd "$optfil_root" && printf 'YES\n' | bash ./setup.sh)
+  # setup.sh supports unattended mode; avoid prompts and skip optional SSH setup.
+  (cd "$optfil_root" && bash ./setup.sh --unattended)
 }
 
 # Build scripts from fil-c deluge branch.
