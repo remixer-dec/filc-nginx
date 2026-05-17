@@ -9,7 +9,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FILC_LIB_DIR="/opt/fil/lib"
-BUILD_DIR="$ROOT_DIR/objs"
+if [ -n "${BUILD_DIR:-}" ]; then
+    BUILD_DIR="$BUILD_DIR"
+elif [ -f "$ROOT_DIR/objs/nginx" ]; then
+    BUILD_DIR="$ROOT_DIR/objs"
+else
+    BUILD_DIR="$ROOT_DIR/objs-filc"
+fi
 STAGING="$ROOT_DIR/filc-nginx-bundle"
 OUTPUT="$ROOT_DIR/filc-nginx.tar.gz"
 

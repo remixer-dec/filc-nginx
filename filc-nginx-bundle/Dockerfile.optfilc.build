@@ -1,0 +1,25 @@
+FROM debian:13 AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates xz-utils patchelf binutils make libc6-dev perl \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+RUN bash scripts/ci-preinstall.sh
+RUN bash scripts/build-filc-deps.sh
+RUN bash scripts/configure-filc-nginx.sh
+RUN make -f objs/Makefile -j"$(nproc)"
+RUN bash scripts/package-opt-filc-nginx.sh
+
+FROM nginx:latest AS nginx-user
+FROM gcr.io/distroless/base-debian13
+
+COPY --from=nginx-user /etc/passwd /etc/passwd
+COPY --from=nginx-user /etc/group /etc/group
+COPY --from=nginx-user /etc/nsswitch.conf /etc/nsswitch.conf
+COPY --from=nginx-user /lib/x86_64-linux-gnu/libnss_files.so.2 /lib/x86_64-linux-gnu/libnss_files.so.2
+
+COPY --from=builder /src/filc-nginx-bundle /usr/local/filc-nginx
+
+ENV LD_LIBRARY_PATH=/usr/local/filc-nginx/lib
+
+CMD ["/usr/local/filc-nginx/nginx", "-p", "/usr/local/filc-nginx/", "-c", "/etc/nginx/nginx.conf", "-e", "/var/log/nginx/error.log", "-g", "daemon off;"]
