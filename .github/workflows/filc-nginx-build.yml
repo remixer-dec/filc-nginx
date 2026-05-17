@@ -64,8 +64,8 @@ jobs:
           DEPS_DIR: /tmp/filc-deps
         run: |
           export PATH=/opt/fil/bin:$PATH
-          export CC=filc
-          export CXX=filc++
+          export CC=filcc
+          export CXX=fil++
           bash scripts/configure-filc-nginx.sh
 
       - name: Build nginx

@@ -21,7 +21,7 @@ ensure_optfil() {
   local archive="$DEPS_DIR/optfil.tar.xz"
   local extract_dir="$DEPS_DIR/optfil"
 
-  if [ -x "$FILC_ROOT/bin/filc" ] || [ -x /opt/fil/bin/filc ]; then
+  if [ -x "$FILC_ROOT/bin/filcc" ] || [ -x /opt/fil/bin/filcc ]; then
     echo "Using preinstalled Fil-C tools from ${FILC_ROOT}"
     return
   fi
