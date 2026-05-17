@@ -49,7 +49,8 @@ ensure_optfil() {
   local optfil_root
   optfil_root="$(cd "$(dirname "$setup_sh")" && pwd)"
   echo "Installing optfil from $optfil_root"
-  (cd "$optfil_root" && bash ./setup.sh)
+  # setup.sh is interactive; force non-interactive confirmation for CI.
+  (cd "$optfil_root" && printf 'YES\n' | bash ./setup.sh)
 }
 
 # Build scripts from fil-c deluge branch.
