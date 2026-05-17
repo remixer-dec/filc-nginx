@@ -72,6 +72,46 @@ static void ngx_ssl_expire_sessions(ngx_ssl_session_cache_t *cache,
     ngx_slab_pool_t *shpool, ngx_uint_t n);
 static void ngx_ssl_session_rbtree_insert_value(ngx_rbtree_node_t *temp,
     ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel);
+static ngx_inline void ngx_ssl_restore_session_rbtree(ngx_slab_pool_t *shpool,
+    ngx_ssl_session_cache_t *cache);
+static ngx_inline void ngx_ssl_restore_expire_queue(ngx_slab_pool_t *shpool,
+    ngx_ssl_session_cache_t *cache);
+static ngx_inline void ngx_ssl_restore_sess_queue_links(ngx_slab_pool_t *shpool,
+    ngx_ssl_sess_id_t *sess_id);
+
+#ifdef NGX_FILC_MODE
+static ngx_slab_pool_t *ngx_ssl_current_shpool;
+#define ngx_ssl_cap(shpool, p)                                                \
+    ((p) ? (void *) ((char *) (shpool)                                        \
+                     + ((unsigned long) (p) - (unsigned long) (shpool)))      \
+         : NULL)
+#else
+#define ngx_ssl_cap(shpool, p) (p)
+#endif
+
+static ngx_inline void
+ngx_ssl_restore_session_rbtree(ngx_slab_pool_t *shpool,
+    ngx_ssl_session_cache_t *cache)
+{
+    cache->session_rbtree.root = ngx_ssl_cap(shpool, cache->session_rbtree.root);
+    cache->session_rbtree.sentinel = ngx_ssl_cap(shpool,
+                                                 cache->session_rbtree.sentinel);
+}
+
+static ngx_inline void
+ngx_ssl_restore_expire_queue(ngx_slab_pool_t *shpool,
+    ngx_ssl_session_cache_t *cache)
+{
+    cache->expire_queue.prev = ngx_ssl_cap(shpool, cache->expire_queue.prev);
+    cache->expire_queue.next = ngx_ssl_cap(shpool, cache->expire_queue.next);
+}
+
+static ngx_inline void
+ngx_ssl_restore_sess_queue_links(ngx_slab_pool_t *shpool, ngx_ssl_sess_id_t *sess_id)
+{
+    sess_id->queue.prev = ngx_ssl_cap(shpool, sess_id->queue.prev);
+    sess_id->queue.next = ngx_ssl_cap(shpool, sess_id->queue.next);
+}
 
 #ifdef SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB
 static int ngx_ssl_ticket_key_callback(ngx_ssl_conn_t *ssl_conn,
@@ -4413,8 +4453,8 @@ ngx_ssl_new_session(ngx_ssl_conn_t *ssl_conn, ngx_ssl_session_t *sess)
     ssl_ctx = c->ssl->session_ctx;
     shm_zone = SSL_CTX_get_ex_data(ssl_ctx, ngx_ssl_session_cache_index);
 
-    cache = shm_zone->data;
     shpool = (ngx_slab_pool_t *) shm_zone->shm.addr;
+    cache = ngx_ssl_cap(shpool, shm_zone->data);
 
     ngx_shmtx_lock(&shpool->mutex);
 
@@ -4476,8 +4516,12 @@ ngx_ssl_new_session(ngx_ssl_conn_t *ssl_conn, ngx_ssl_session_t *sess)
 
     sess_id->expire = ngx_time() + SSL_CTX_get_timeout(ssl_ctx);
 
+    ngx_ssl_restore_expire_queue(shpool, cache);
     ngx_queue_insert_head(&cache->expire_queue, &sess_id->queue);
-
+#ifdef NGX_FILC_MODE
+    ngx_ssl_current_shpool = shpool;
+#endif
+    ngx_ssl_restore_session_rbtree(shpool, cache);
     ngx_rbtree_insert(&cache->session_rbtree, &sess_id->node);
 
     ngx_shmtx_unlock(&shpool->mutex);
@@ -4532,26 +4576,25 @@ ngx_ssl_get_cached_session(ngx_ssl_conn_t *ssl_conn,
     shm_zone = SSL_CTX_get_ex_data(c->ssl->session_ctx,
                                    ngx_ssl_session_cache_index);
 
-    cache = shm_zone->data;
-
     sess = NULL;
-
     shpool = (ngx_slab_pool_t *) shm_zone->shm.addr;
+    cache = ngx_ssl_cap(shpool, shm_zone->data);
 
     ngx_shmtx_lock(&shpool->mutex);
 
-    node = cache->session_rbtree.root;
-    sentinel = cache->session_rbtree.sentinel;
+    ngx_ssl_restore_session_rbtree(shpool, cache);
+    node = ngx_ssl_cap(shpool, cache->session_rbtree.root);
+    sentinel = ngx_ssl_cap(shpool, cache->session_rbtree.sentinel);
 
     while (node != sentinel) {
 
         if (hash < node->key) {
-            node = node->left;
+            node = ngx_ssl_cap(shpool, node->left);
             continue;
         }
 
         if (hash > node->key) {
-            node = node->right;
+            node = ngx_ssl_cap(shpool, node->right);
             continue;
         }
 
@@ -4577,8 +4620,10 @@ ngx_ssl_get_cached_session(ngx_ssl_conn_t *ssl_conn,
                 return sess;
             }
 
+            ngx_ssl_restore_sess_queue_links(shpool, sess_id);
             ngx_queue_remove(&sess_id->queue);
 
+            ngx_ssl_restore_session_rbtree(shpool, cache);
             ngx_rbtree_delete(&cache->session_rbtree, node);
 
             ngx_explicit_memzero(sess_id->session, sess_id->len);
@@ -4593,7 +4638,7 @@ ngx_ssl_get_cached_session(ngx_ssl_conn_t *ssl_conn,
             goto done;
         }
 
-        node = (rc < 0) ? node->left : node->right;
+        node = ngx_ssl_cap(shpool, (rc < 0) ? node->left : node->right);
     }
 
 done:
@@ -4632,31 +4677,30 @@ ngx_ssl_remove_session(SSL_CTX *ssl, ngx_ssl_session_t *sess)
         return;
     }
 
-    cache = shm_zone->data;
-
     id = (u_char *) SSL_SESSION_get_id(sess, &len);
-
     hash = ngx_crc32_short(id, len);
 
     ngx_log_debug2(NGX_LOG_DEBUG_EVENT, ngx_cycle->log, 0,
                    "ssl remove session: %08XD:%ud", hash, len);
 
     shpool = (ngx_slab_pool_t *) shm_zone->shm.addr;
+    cache = ngx_ssl_cap(shpool, shm_zone->data);
 
     ngx_shmtx_lock(&shpool->mutex);
 
-    node = cache->session_rbtree.root;
-    sentinel = cache->session_rbtree.sentinel;
+    ngx_ssl_restore_session_rbtree(shpool, cache);
+    node = ngx_ssl_cap(shpool, cache->session_rbtree.root);
+    sentinel = ngx_ssl_cap(shpool, cache->session_rbtree.sentinel);
 
     while (node != sentinel) {
 
         if (hash < node->key) {
-            node = node->left;
+            node = ngx_ssl_cap(shpool, node->left);
             continue;
         }
 
         if (hash > node->key) {
-            node = node->right;
+            node = ngx_ssl_cap(shpool, node->right);
             continue;
         }
 
@@ -4668,8 +4712,10 @@ ngx_ssl_remove_session(SSL_CTX *ssl, ngx_ssl_session_t *sess)
 
         if (rc == 0) {
 
+            ngx_ssl_restore_sess_queue_links(shpool, sess_id);
             ngx_queue_remove(&sess_id->queue);
 
+            ngx_ssl_restore_session_rbtree(shpool, cache);
             ngx_rbtree_delete(&cache->session_rbtree, node);
 
             ngx_explicit_memzero(sess_id->session, sess_id->len);
@@ -4682,7 +4728,7 @@ ngx_ssl_remove_session(SSL_CTX *ssl, ngx_ssl_session_t *sess)
             goto done;
         }
 
-        node = (rc < 0) ? node->left : node->right;
+        node = ngx_ssl_cap(shpool, (rc < 0) ? node->left : node->right);
     }
 
 done:
@@ -4702,24 +4748,27 @@ ngx_ssl_expire_sessions(ngx_ssl_session_cache_t *cache,
     now = ngx_time();
 
     while (n < 3) {
+        ngx_ssl_restore_expire_queue(shpool, cache);
 
         if (ngx_queue_empty(&cache->expire_queue)) {
             return;
         }
 
-        q = ngx_queue_last(&cache->expire_queue);
+        q = ngx_ssl_cap(shpool, ngx_queue_last(&cache->expire_queue));
 
-        sess_id = ngx_queue_data(q, ngx_ssl_sess_id_t, queue);
+        sess_id = ngx_ssl_cap(shpool, ngx_queue_data(q, ngx_ssl_sess_id_t, queue));
 
         if (n++ != 0 && sess_id->expire > now) {
             return;
         }
 
+        ngx_ssl_restore_sess_queue_links(shpool, sess_id);
         ngx_queue_remove(q);
 
         ngx_log_debug1(NGX_LOG_DEBUG_EVENT, ngx_cycle->log, 0,
                        "expire session: %08Xi", sess_id->node.key);
 
+        ngx_ssl_restore_session_rbtree(shpool, cache);
         ngx_rbtree_delete(&cache->session_rbtree, &sess_id->node);
 
         ngx_explicit_memzero(sess_id->session, sess_id->len);
@@ -4738,8 +4787,13 @@ ngx_ssl_session_rbtree_insert_value(ngx_rbtree_node_t *temp,
 {
     ngx_rbtree_node_t  **p;
     ngx_ssl_sess_id_t   *sess_id, *sess_id_temp;
+    temp = ngx_ssl_cap(ngx_ssl_current_shpool, temp);
+    sentinel = ngx_ssl_cap(ngx_ssl_current_shpool, sentinel);
 
     for ( ;; ) {
+        temp->parent = ngx_ssl_cap(ngx_ssl_current_shpool, temp->parent);
+        temp->left = ngx_ssl_cap(ngx_ssl_current_shpool, temp->left);
+        temp->right = ngx_ssl_cap(ngx_ssl_current_shpool, temp->right);
 
         if (node->key < temp->key) {
 
@@ -4759,11 +4813,11 @@ ngx_ssl_session_rbtree_insert_value(ngx_rbtree_node_t *temp,
                  < 0) ? &temp->left : &temp->right;
         }
 
-        if (*p == sentinel) {
+        if (ngx_ssl_cap(ngx_ssl_current_shpool, *p) == sentinel) {
             break;
         }
 
-        temp = *p;
+        temp = ngx_ssl_cap(ngx_ssl_current_shpool, *p);
     }
 
     *p = node;
@@ -5113,8 +5167,8 @@ ngx_ssl_rotate_ticket_keys(SSL_CTX *ssl_ctx, ngx_log_t *log)
 
     shm_zone = SSL_CTX_get_ex_data(ssl_ctx, ngx_ssl_session_cache_index);
 
-    cache = shm_zone->data;
     shpool = (ngx_slab_pool_t *) shm_zone->shm.addr;
+    cache = ngx_ssl_cap(shpool, shm_zone->data);
 
     ngx_shmtx_lock(&shpool->mutex);
 
