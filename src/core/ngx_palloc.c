@@ -10,58 +10,128 @@
 
 #ifdef NGX_FILC_MODE
 #include <stdfil.h>
+#include <stdlib.h>
 
-#define NGX_FILC_PTR_MAPS  65536
+#define NGX_FILC_PTR_BUCKETS  16384
 
-typedef struct {
-    uintptr_t  base;
-    uintptr_t  end;
-    void      *cap;
-} ngx_filc_ptr_map_t;
+typedef struct ngx_filc_ptr_map_s  ngx_filc_ptr_map_t;
+
+struct ngx_filc_ptr_map_s {
+    uintptr_t          base;
+    uintptr_t          end;
+    void              *cap;
+    ngx_filc_ptr_map_t *next;
+};
 
 
-static ngx_filc_ptr_map_t  ngx_filc_ptr_maps[NGX_FILC_PTR_MAPS];
-static ngx_uint_t          ngx_filc_ptr_nmaps;
+static ngx_filc_ptr_map_t *ngx_filc_ptr_maps[NGX_FILC_PTR_BUCKETS];
+
+
+static ngx_inline uintptr_t
+ngx_filc_page(uintptr_t addr)
+{
+    return addr / (uintptr_t) 4096;
+}
+
+
+static ngx_inline ngx_uint_t
+ngx_filc_ptr_bucket(uintptr_t page)
+{
+    return (ngx_uint_t) ((page ^ (page >> 11)) & (NGX_FILC_PTR_BUCKETS - 1));
+}
 
 
 void
 ngx_filc_register_ptr(void *addr, size_t size)
 {
-    uintptr_t   base, end;
-    ngx_uint_t  i;
+    uintptr_t           base, end, page, last;
+    ngx_uint_t          bucket;
+    ngx_filc_ptr_map_t *m;
 
     if (addr == NULL || size == 0 || !zhasvalidcap(addr)) {
         return;
     }
 
     base = (uintptr_t) addr;
-    end = base + size;
 
-    for (i = 0; i < ngx_filc_ptr_nmaps; i++) {
-        if (ngx_filc_ptr_maps[i].base == base) {
-            ngx_filc_ptr_maps[i].end = end;
-            ngx_filc_ptr_maps[i].cap = addr;
-            return;
-        }
+    if (size > (size_t) (UINTPTR_MAX - base)) {
+        zsafety_error("ngx_filc_register_ptr(): range overflow");
     }
 
-    if (ngx_filc_ptr_nmaps < NGX_FILC_PTR_MAPS) {
-        ngx_filc_ptr_maps[ngx_filc_ptr_nmaps].base = base;
-        ngx_filc_ptr_maps[ngx_filc_ptr_nmaps].end = end;
-        ngx_filc_ptr_maps[ngx_filc_ptr_nmaps].cap = addr;
-        ngx_filc_ptr_nmaps++;
+    end = base + size;
+    page = ngx_filc_page(base);
+    last = ngx_filc_page(end - 1);
+
+    for ( ;; page++) {
+        m = malloc(sizeof(ngx_filc_ptr_map_t));
+        if (m == NULL) {
+            zsafety_error("ngx_filc_register_ptr(): registry allocation failed");
+        }
+
+        m->base = base;
+        m->end = end;
+        m->cap = addr;
+
+        bucket = ngx_filc_ptr_bucket(page);
+        m->next = ngx_filc_ptr_maps[bucket];
+        ngx_filc_ptr_maps[bucket] = m;
+
+        if (page == last) {
+            break;
+        }
+    }
+}
+
+
+void
+ngx_filc_unregister_ptr(void *addr, size_t size)
+{
+    uintptr_t            base, end, page, last;
+    ngx_uint_t           bucket;
+    ngx_filc_ptr_map_t **pm, *m;
+
+    if (addr == NULL || size == 0) {
         return;
     }
 
-    zsafety_error("ngx_filc_register_ptr(): pointer registry exhausted");
+    base = (uintptr_t) addr;
+
+    if (size > (size_t) (UINTPTR_MAX - base)) {
+        zsafety_error("ngx_filc_unregister_ptr(): range overflow");
+    }
+
+    end = base + size;
+    page = ngx_filc_page(base);
+    last = ngx_filc_page(end - 1);
+
+    for ( ;; page++) {
+        bucket = ngx_filc_ptr_bucket(page);
+
+        for (pm = &ngx_filc_ptr_maps[bucket]; *pm; /* void */) {
+            m = *pm;
+
+            if (m->base == base && m->end == end) {
+                *pm = m->next;
+                free(m);
+                continue;
+            }
+
+            pm = &m->next;
+        }
+
+        if (page == last) {
+            break;
+        }
+    }
 }
 
 
 void *
 ngx_filc_retag_ptr(const void *p)
 {
-    uintptr_t   addr;
-    ngx_uint_t  i;
+    uintptr_t           addr, page;
+    ngx_uint_t          bucket;
+    ngx_filc_ptr_map_t *m;
 
     if (p == NULL) {
         return NULL;
@@ -72,14 +142,15 @@ ngx_filc_retag_ptr(const void *p)
     }
 
     addr = (uintptr_t) p;
+    page = ngx_filc_page(addr);
+    bucket = ngx_filc_ptr_bucket(page);
 
-    for (i = 0; i < ngx_filc_ptr_nmaps; i++) {
-        if (addr >= ngx_filc_ptr_maps[i].base
-            && addr < ngx_filc_ptr_maps[i].end
-            && zhasvalidcap(ngx_filc_ptr_maps[i].cap))
+    for (m = ngx_filc_ptr_maps[bucket]; m; m = m->next) {
+        if (addr >= m->base
+            && addr < m->end
+            && zhasvalidcap(m->cap))
         {
-            return zmkptr(ngx_filc_ptr_maps[i].cap,
-                          (unsigned long) addr);
+            return zmkptr(m->cap, (unsigned long) addr);
         }
     }
 
@@ -95,10 +166,16 @@ ngx_pool_filc_ptr(ngx_pool_t *pool, const void *p)
     }
 
     return (u_char *) zmkptr(pool->d.addr ? pool->d.addr : (void *) pool,
-                             (unsigned long) (uintptr_t) p);
+                              (unsigned long) (uintptr_t) p);
 }
 
 #define ngx_pool_ptr(pool, p)  ngx_pool_filc_ptr(pool, p)
+
+static ngx_inline size_t
+ngx_pool_filc_block_size(ngx_pool_t *p)
+{
+    return (size_t) ((uintptr_t) p->d.end - (uintptr_t) p->d.addr);
+}
 #else
 #define ngx_pool_ptr(pool, p)  (p)
 #endif
@@ -181,11 +258,17 @@ ngx_destroy_pool(ngx_pool_t *pool)
 
     for (l = pool->large; l; l = l->next) {
         if (l->alloc) {
+#ifdef NGX_FILC_MODE
+            ngx_filc_unregister_ptr(l->alloc, l->size);
+#endif
             ngx_free(l->alloc);
         }
     }
 
     for (p = pool, n = pool->d.next; /* void */; p = n, n = n->d.next) {
+#ifdef NGX_FILC_MODE
+        ngx_filc_unregister_ptr(p->d.addr, ngx_pool_filc_block_size(p));
+#endif
         ngx_free(p);
 
         if (n == NULL) {
@@ -203,6 +286,10 @@ ngx_reset_pool(ngx_pool_t *pool)
 
     for (l = pool->large; l; l = l->next) {
         if (l->alloc) {
+#ifdef NGX_FILC_MODE
+            ngx_filc_unregister_ptr(l->alloc, l->size);
+            l->size = 0;
+#endif
             ngx_free(l->alloc);
         }
     }
@@ -343,6 +430,9 @@ ngx_palloc_large(ngx_pool_t *pool, size_t size)
     for (large = pool->large; large; large = large->next) {
         if (large->alloc == NULL) {
             large->alloc = p;
+#ifdef NGX_FILC_MODE
+            large->size = size;
+#endif
             return p;
         }
 
@@ -358,6 +448,9 @@ ngx_palloc_large(ngx_pool_t *pool, size_t size)
     }
 
     large->alloc = p;
+#ifdef NGX_FILC_MODE
+    large->size = size;
+#endif
     large->next = pool->large;
     pool->large = large;
 
@@ -387,6 +480,9 @@ ngx_pmemalign(ngx_pool_t *pool, size_t size, size_t alignment)
     }
 
     large->alloc = p;
+#ifdef NGX_FILC_MODE
+    large->size = size;
+#endif
     large->next = pool->large;
     pool->large = large;
 
@@ -401,10 +497,16 @@ ngx_pfree(ngx_pool_t *pool, void *p)
 
     for (l = pool->large; l; l = l->next) {
         if (p == l->alloc) {
-            ngx_log_debug1(NGX_LOG_DEBUG_ALLOC, pool->log, 0,
-                           "free: %p", l->alloc);
+          ngx_log_debug1(NGX_LOG_DEBUG_ALLOC, pool->log, 0,
+                            "free: %p", l->alloc);
+#ifdef NGX_FILC_MODE
+            ngx_filc_unregister_ptr(l->alloc, l->size);
+#endif
             ngx_free(l->alloc);
             l->alloc = NULL;
+#ifdef NGX_FILC_MODE
+            l->size = 0;
+#endif
 
             return NGX_OK;
         }

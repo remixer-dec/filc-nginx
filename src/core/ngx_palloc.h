@@ -43,6 +43,9 @@ typedef struct ngx_pool_large_s  ngx_pool_large_t;
 struct ngx_pool_large_s {
     ngx_pool_large_t     *next;
     void                 *alloc;
+#ifdef NGX_FILC_MODE
+    size_t                size;
+#endif
 };
 
 
@@ -94,6 +97,7 @@ void ngx_pool_delete_file(void *data);
 
 #ifdef NGX_FILC_MODE
 void ngx_filc_register_ptr(void *addr, size_t size);
+void ngx_filc_unregister_ptr(void *addr, size_t size);
 void *ngx_filc_retag_ptr(const void *p);
 #define ngx_filc_ptr(p)  ngx_filc_retag_ptr((const void *) (p))
 #endif
