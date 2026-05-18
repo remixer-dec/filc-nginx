@@ -18,11 +18,7 @@ typedef struct ngx_slab_page_s  ngx_slab_page_t;
 struct ngx_slab_page_s {
     uintptr_t         slab;
     ngx_slab_page_t  *next;
-#ifdef NGX_FILC_MODE
-    ngx_slab_page_t  *prev;
-#else
     uintptr_t         prev;
-#endif
 };
 
 
@@ -67,6 +63,12 @@ void ngx_slab_sizes_init(void);
 void ngx_slab_init(ngx_slab_pool_t *pool);
 void *ngx_slab_alloc(ngx_slab_pool_t *pool, size_t size);
 void *ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size);
+
+#ifdef NGX_FILC_MODE
+void ngx_slab_filc_register(ngx_slab_pool_t *pool, void *addr, size_t size);
+void *ngx_slab_filc_ptr(ngx_slab_pool_t *pool, const void *p);
+#endif
+
 void *ngx_slab_calloc(ngx_slab_pool_t *pool, size_t size);
 void *ngx_slab_calloc_locked(ngx_slab_pool_t *pool, size_t size);
 void ngx_slab_free(ngx_slab_pool_t *pool, void *p);

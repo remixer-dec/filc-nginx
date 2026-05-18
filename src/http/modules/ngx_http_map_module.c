@@ -8,12 +8,12 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <ngx_palloc.h>
 
 
 typedef struct {
     ngx_uint_t                  hash_max_size;
     ngx_uint_t                  hash_bucket_size;
-    ngx_array_t                *map_ctxs;
 } ngx_http_map_conf_t;
 
 
@@ -109,9 +109,11 @@ static ngx_int_t
 ngx_http_map_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     uintptr_t data)
 {
-    ngx_uint_t                 idx;
-    ngx_http_map_ctx_t       **map_ctxs, *map;
-    ngx_http_map_conf_t       *mcf;
+#ifdef NGX_FILC_MODE
+    ngx_http_map_ctx_t  *map = (ngx_http_map_ctx_t *) ngx_filc_ptr(data);
+#else
+    ngx_http_map_ctx_t  *map = (ngx_http_map_ctx_t *) data;
+#endif
 
     ngx_str_t                   val, str;
     ngx_http_complex_value_t   *cv;
@@ -119,24 +121,6 @@ ngx_http_map_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v,
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "http map started");
-
-    mcf = ngx_http_get_module_main_conf(r, ngx_http_map_module);
-    idx = (ngx_uint_t) data;
-
-    if (mcf->map_ctxs == NULL || idx >= mcf->map_ctxs->nelts) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "http map has invalid ctx index: %ui", idx);
-        return NGX_ERROR;
-    }
-
-    map_ctxs = mcf->map_ctxs->elts;
-    map = map_ctxs[idx];
-
-    if (map == NULL) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "http map ctx is NULL for index: %ui", idx);
-        return NGX_ERROR;
-    }
 
     if (ngx_http_complex_value(r, &map->value, &val) != NGX_OK) {
         return NGX_ERROR;
@@ -152,20 +136,12 @@ ngx_http_map_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v,
         value = map->default_value;
     }
 
-    if (value == NULL) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "http map resolved to NULL value");
-        return NGX_ERROR;
-    }
-
     if (!value->valid) {
+#ifdef NGX_FILC_MODE
+        cv = (ngx_http_complex_value_t *) ngx_filc_ptr(value->data);
+#else
         cv = (ngx_http_complex_value_t *) value->data;
-
-        if (cv == NULL) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "http map has dynamic value with NULL script");
-            return NGX_ERROR;
-        }
+#endif
 
         if (ngx_http_complex_value(r, cv, &str) != NGX_OK) {
             return NGX_ERROR;
@@ -200,7 +176,6 @@ ngx_http_map_create_conf(ngx_conf_t *cf)
 
     mcf->hash_max_size = NGX_CONF_UNSET_UINT;
     mcf->hash_bucket_size = NGX_CONF_UNSET_UINT;
-    mcf->map_ctxs = NULL;
 
     return mcf;
 }
@@ -217,7 +192,6 @@ ngx_http_map_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     ngx_pool_t                        *pool;
     ngx_hash_init_t                    hash;
     ngx_http_map_ctx_t                *map;
-    ngx_http_map_ctx_t               **map_ptr;
     ngx_http_variable_t               *var;
     ngx_http_map_conf_ctx_t            ctx;
     ngx_http_compile_complex_value_t   ccv;
@@ -268,22 +242,7 @@ ngx_http_map_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     }
 
     var->get_handler = ngx_http_map_variable;
-
-    if (mcf->map_ctxs == NULL) {
-        mcf->map_ctxs = ngx_array_create(cf->pool, 4,
-                                         sizeof(ngx_http_map_ctx_t *));
-        if (mcf->map_ctxs == NULL) {
-            return NGX_CONF_ERROR;
-        }
-    }
-
-    map_ptr = ngx_array_push(mcf->map_ctxs);
-    if (map_ptr == NULL) {
-        return NGX_CONF_ERROR;
-    }
-
-    *map_ptr = map;
-    var->data = (uintptr_t) (mcf->map_ctxs->nelts - 1);
+    var->data = (uintptr_t) map;
 
     pool = ngx_create_pool(NGX_DEFAULT_POOL_SIZE, cf->log);
     if (pool == NULL) {
@@ -487,11 +446,6 @@ ngx_http_map(ngx_conf_t *cf, ngx_command_t *dummy, void *conf)
 
             } else {
                 cvp = (ngx_http_complex_value_t *) vp[i]->data;
-                if (cvp == NULL) {
-                    ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                                       "map has dynamic value with NULL script");
-                    return NGX_CONF_ERROR;
-                }
                 data = cvp->value.data;
                 len = cvp->value.len;
             }

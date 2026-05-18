@@ -64,11 +64,19 @@ typedef volatile ngx_atomic_uint_t  ngx_atomic_t;
 
 #define ngx_memory_barrier()        __sync_synchronize()
 
+#ifdef NGX_FILC_MODE
+/*
+ * Fil-C currently does not lower every x86 pause/fence intrinsic emitted by
+ * some compilers for this path.  Correctness comes from the atomic CAS above;
+ * pause is only a spin-loop hint.
+ */
+#define ngx_cpu_pause()
+#else
 #if ( __i386__ || __i386 || __amd64__ || __amd64 )
-/* Fil-C cannot handle inline asm; use compiler builtin for pause */
-#define ngx_cpu_pause()             __builtin_ia32_lfence()
+#define ngx_cpu_pause()             __asm__ ("pause")
 #else
 #define ngx_cpu_pause()
+#endif
 #endif
 
 

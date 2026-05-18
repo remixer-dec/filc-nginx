@@ -9,36 +9,6 @@
 
 #ifdef NGX_FILC_MODE
 #include <stdfil.h>
-
-/*
- * In Fil-C mode, pointers read from shared memory lose capabilities.
- * Reconstruct pointers using local 'pool' capability while applying
- * numerical address translation against original shared mapping base.
- */
-#define ngx_slab_orig_base(pool)                                              \
-    ((unsigned long) ((pool)->addr ? (pool)->addr : (void *) (pool)))
-#define ngx_slab_ptr(pool, p)                                                 \
-    ((p) ? (void *) ((u_char *) (pool)                                        \
-                     + ((unsigned long) (p) - ngx_slab_orig_base(pool)))      \
-         : NULL)
-#define ngx_slab_set_prev(pool, page, ptr, type)                              \
-    do { ((ngx_slab_page_t *) ngx_slab_ptr(pool, page))->prev = (uintptr_t) \
-        ((((unsigned long) (ptr) - (unsigned long) (pool)) >> 2) | (type)); } while (0)
-#define ngx_slab_get_prev(pool, page)                                         \
-    ((ngx_slab_page_t *) ((u_char *) (pool) +                                 \
-                         (((unsigned long)((ngx_slab_page_t *) ngx_slab_ptr(pool, page))->prev & ~NGX_SLAB_PAGE_MASK) << 2)))
-#define ngx_slab_get_type(page)                                               \
-    (((unsigned long)(page)->prev) & NGX_SLAB_PAGE_MASK)
-
-#else
-
-#define ngx_slab_set_prev(pool, page, ptr, type)                                    \
-    do { (page)->prev = (uintptr_t)(ptr) | (type); } while (0)
-#define ngx_slab_get_prev(pool, page)                                         \
-    ((ngx_slab_page_t *)((page)->prev & ~NGX_SLAB_PAGE_MASK))
-#define ngx_slab_get_type(page)                                               \
-    ((page)->prev & NGX_SLAB_PAGE_MASK)
-
 #endif
 
 
@@ -75,8 +45,227 @@
 #endif
 
 
+#ifdef NGX_FILC_MODE
+
+#define NGX_SLAB_FILC_MAPS  64
+
+typedef struct {
+    uintptr_t  base;
+    uintptr_t  end;
+    void      *cap;
+} ngx_slab_filc_map_t;
+
+
+static ngx_slab_filc_map_t  ngx_slab_filc_maps[NGX_SLAB_FILC_MAPS];
+static ngx_uint_t           ngx_slab_filc_nmaps;
+
+
+static ngx_slab_filc_map_t *ngx_slab_filc_find(ngx_slab_pool_t *pool);
+
+/*
+ * In Fil-C mode, shared-memory pointer fields must be treated as numeric
+ * addresses.  Loading a pointer from shared memory can give us the right
+ * integer value with a null capability, so every reconstructed slab pointer
+ * is retagged with a capability that comes from the current mapping.
+ */
+static ngx_inline uintptr_t
+ngx_slab_orig_base(ngx_slab_pool_t *pool)
+{
+    ngx_slab_filc_map_t  *map;
+
+    map = ngx_slab_filc_find(pool);
+    if (map != NULL) {
+        return map->base;
+    }
+
+    return (uintptr_t) (pool->addr ? pool->addr : (void *) pool);
+}
+
+
+static ngx_slab_filc_map_t *
+ngx_slab_filc_find(ngx_slab_pool_t *pool)
+{
+    uintptr_t   p;
+    ngx_uint_t  i;
+
+    p = (uintptr_t) pool;
+
+    for (i = 0; i < ngx_slab_filc_nmaps; i++) {
+        if (p >= ngx_slab_filc_maps[i].base
+            && p < ngx_slab_filc_maps[i].end)
+        {
+            return &ngx_slab_filc_maps[i];
+        }
+    }
+
+    return NULL;
+}
+
+
+void
+ngx_slab_filc_register(ngx_slab_pool_t *pool, void *addr, size_t size)
+{
+    uintptr_t   base, end;
+    ngx_uint_t  i;
+
+    if (addr == NULL || size == 0 || !zhasvalidcap(addr)) {
+        return;
+    }
+
+    base = (uintptr_t) addr;
+    end = base + size;
+
+    for (i = 0; i < ngx_slab_filc_nmaps; i++) {
+        if (ngx_slab_filc_maps[i].base == base) {
+            ngx_slab_filc_maps[i].end = end;
+            ngx_slab_filc_maps[i].cap = addr;
+            return;
+        }
+    }
+
+    if (ngx_slab_filc_nmaps < NGX_SLAB_FILC_MAPS) {
+        ngx_slab_filc_maps[ngx_slab_filc_nmaps].base = base;
+        ngx_slab_filc_maps[ngx_slab_filc_nmaps].end = end;
+        ngx_slab_filc_maps[ngx_slab_filc_nmaps].cap = addr;
+        ngx_slab_filc_nmaps++;
+        return;
+    }
+
+    zsafety_error("ngx_slab_filc_register(): too many shared memory mappings");
+}
+
+
+static ngx_inline void *
+ngx_slab_cap_base(ngx_slab_pool_t *pool)
+{
+    ngx_slab_filc_map_t  *map;
+
+    map = ngx_slab_filc_find(pool);
+    if (map != NULL && zhasvalidcap(map->cap)) {
+        return map->cap;
+    }
+
+    if (pool->addr != NULL && zhasvalidcap(pool->addr)) {
+        return pool->addr;
+    }
+
+    return (void *) pool;
+}
+
+
+static ngx_inline uintptr_t
+ngx_slab_local_to_orig(ngx_slab_pool_t *pool, const void *p)
+{
+    return (uintptr_t) p;
+}
+
+
+void *
+ngx_slab_filc_ptr(ngx_slab_pool_t *pool, const void *p)
+{
+    void      *cap;
+
+    if (p == NULL) {
+        return NULL;
+    }
+
+    cap = ngx_slab_cap_base(pool);
+
+    if (!zhasvalidcap(cap)) {
+        zsafety_error("ngx_slab_filc_ptr(): no valid shared memory capability");
+    }
+
+    return zmkptr(cap, (unsigned long) (uintptr_t) p);
+}
+
+#define ngx_slab_ptr(pool, p)  ngx_slab_filc_ptr(pool, p)
+
+
+static ngx_inline ngx_slab_page_t *
+ngx_slab_page_at(ngx_slab_pool_t *pool, ngx_uint_t n)
+{
+    return (ngx_slab_page_t *) ngx_slab_ptr(pool,
+        (void *) ((uintptr_t) pool->pages
+                  + (uintptr_t) n * sizeof(ngx_slab_page_t)));
+}
+
+
+static ngx_inline uintptr_t
+ngx_slab_encode_prev(ngx_slab_pool_t *pool, ngx_slab_page_t *prev,
+    uintptr_t type)
+{
+    if (prev == NULL) {
+        return type;
+    }
+
+    return (((ngx_slab_local_to_orig(pool, prev) - ngx_slab_orig_base(pool))
+             >> 2) | type);
+}
+
+
+static ngx_inline void
+ngx_slab_set_prev(ngx_slab_pool_t *pool, ngx_slab_page_t *page,
+    ngx_slab_page_t *prev, uintptr_t type)
+{
+    ((ngx_slab_page_t *) ngx_slab_ptr(pool, page))->prev =
+        ngx_slab_encode_prev(pool, prev, type);
+}
+
+
+static ngx_inline uintptr_t
+ngx_slab_get_type(ngx_slab_page_t *page)
+{
+    return (page->prev & NGX_SLAB_PAGE_MASK);
+}
+
+
+static ngx_inline ngx_slab_page_t *
+ngx_slab_get_prev(ngx_slab_pool_t *pool, ngx_slab_page_t *page)
+{
+    uintptr_t  prev;
+
+    prev = ((ngx_slab_page_t *) ngx_slab_ptr(pool, page))->prev
+           & ~NGX_SLAB_PAGE_MASK;
+
+    if (prev == 0) {
+        return NULL;
+    }
+
+    return (ngx_slab_page_t *) ngx_slab_ptr(pool,
+        (void *) (ngx_slab_orig_base(pool) + (prev << 2)));
+}
+
+
+static ngx_inline u_char *
+ngx_slab_page_addr(ngx_slab_pool_t *pool, ngx_slab_page_t *page)
+{
+    uintptr_t  n;
+
+    n = ((uintptr_t) page - (uintptr_t) pool->pages)
+        / sizeof(ngx_slab_page_t);
+
+    return (u_char *) ngx_slab_ptr(pool,
+        (void *) ((uintptr_t) pool->start + (n << ngx_pagesize_shift)));
+}
+
+
+#define ngx_slab_page_prev(pool, page)  ngx_slab_get_prev(pool, page)
+
+#else
+
+#define ngx_slab_page_prev(pool, page)                                      \
+    (ngx_slab_page_t *) ((page)->prev & ~NGX_SLAB_PAGE_MASK)
+
+#endif
+
+#ifdef NGX_FILC_MODE
+#define ngx_slab_slots(pool)                                                  \
+    (ngx_slab_page_t *) ngx_slab_ptr(pool,                                    \
+        (void *) (ngx_slab_orig_base(pool) + sizeof(ngx_slab_pool_t)))
+#else
 #define ngx_slab_slots(pool)                                                  \
     (ngx_slab_page_t *) ((u_char *) (pool) + sizeof(ngx_slab_pool_t))
+#endif
 
 #ifdef NGX_FILC_MODE
 #define ngx_slab_stats(pool) ((ngx_slab_stat_t *) ngx_slab_ptr(pool, (pool)->stats))
@@ -85,28 +274,6 @@
 #define ngx_slab_stats(pool) ((pool)->stats)
 #define ngx_slab_page_type(page)   ((page)->prev & NGX_SLAB_PAGE_MASK)
 #endif
-
-#ifdef NGX_FILC_MODE
-#define ngx_slab_page_prev(pool, page)   ngx_slab_get_prev(pool, page)
-#else
-#define ngx_slab_page_prev(pool, page)                                        \
-    (ngx_slab_page_t *) ((page)->prev & ~NGX_SLAB_PAGE_MASK)
-#endif
-
-#ifdef NGX_FILC_MODE
-#define ngx_slab_page_addr(pool, page)                                        \
-    ((void *) ((u_char *) ngx_slab_ptr(pool, (pool)->start) +                 \
-               (((ngx_slab_page_t *) (page)                                   \
-                 - (ngx_slab_page_t *) ngx_slab_ptr(pool, (pool)->pages))     \
-                << ngx_pagesize_shift)))
-#else
-#define ngx_slab_page_addr(pool, page)                                        \
-    ((void *) ((((page) - (pool)->pages) << ngx_pagesize_shift)               \
-               + (uintptr_t) (pool)->start))
-#define ngx_slab_ptr(pool, p)                                                 \
-    (void *)(p)
-#endif
-
 
 #if (NGX_DEBUG_MALLOC)
 
@@ -150,11 +317,20 @@ ngx_slab_page_is_valid(ngx_slab_pool_t *pool, ngx_slab_page_t *page)
 static ngx_inline ngx_int_t
 ngx_slab_prev_is_valid(ngx_slab_pool_t *pool, ngx_slab_page_t *prev)
 {
+    ngx_uint_t        n;
+    ngx_slab_page_t  *slots;
+
     if (prev == NULL) {
         return 0;
     }
 
     if (prev == &pool->free) {
+        return 1;
+    }
+
+    n = ngx_pagesize_shift - pool->min_shift;
+    slots = ngx_slab_slots(pool);
+    if (prev >= slots && prev < slots + n) {
         return 1;
     }
 
@@ -169,14 +345,16 @@ ngx_slab_prev_is_valid(ngx_slab_pool_t *pool, ngx_slab_page_t *prev)
 
 
 static ngx_slab_page_t *
-ngx_slab_list_prev(ngx_slab_pool_t *pool, ngx_slab_page_t *target)
+ngx_slab_slot_prev(ngx_slab_pool_t *pool, ngx_uint_t slot,
+    ngx_slab_page_t *target)
 {
-    ngx_slab_page_t  *prev, *page;
+    ngx_slab_page_t  *slots, *prev, *page;
 
-    prev = &pool->free;
+    slots = ngx_slab_slots(pool);
+    prev = &slots[slot];
 
-    for (page = (ngx_slab_page_t *) ngx_slab_ptr(pool, pool->free.next);
-         page != &pool->free;
+    for (page = (ngx_slab_page_t *) ngx_slab_ptr(pool, slots[slot].next);
+         page != &slots[slot];
          page = (ngx_slab_page_t *) ngx_slab_ptr(pool, page->next))
     {
         if (!ngx_slab_page_is_valid(pool, page)) {
@@ -191,6 +369,48 @@ ngx_slab_list_prev(ngx_slab_pool_t *pool, ngx_slab_page_t *target)
     }
 
     return NULL;
+}
+
+
+static ngx_int_t
+ngx_slab_unlink_slot_page(ngx_slab_pool_t *pool, ngx_uint_t slot,
+    ngx_slab_page_t *page, ngx_uint_t type)
+{
+    ngx_slab_page_t  *next, *prev, *slots;
+
+    if (page == NULL || page->next == NULL) {
+        return NGX_OK;
+    }
+
+    slots = ngx_slab_slots(pool);
+
+    prev = ngx_slab_page_prev(pool, page);
+
+    if (!ngx_slab_prev_is_valid(pool, prev)
+        || (prev != &slots[slot]
+            && (prev < (ngx_slab_page_t *) ngx_slab_ptr(pool, pool->pages)
+                || prev >= (ngx_slab_page_t *) ngx_slab_ptr(pool, pool->last))))
+    {
+        prev = ngx_slab_slot_prev(pool, slot, page);
+    }
+
+    if (!ngx_slab_prev_is_valid(pool, prev)) {
+        return NGX_ERROR;
+    }
+
+    next = (ngx_slab_page_t *) ngx_slab_ptr(pool, page->next);
+
+    if (!ngx_slab_prev_is_valid(pool, next)) {
+        return NGX_ERROR;
+    }
+
+    prev->next = page->next;
+    ngx_slab_set_prev(pool, page->next, prev, type);
+
+    page->next = NULL;
+    ngx_slab_set_prev(pool, page, NULL, type);
+
+    return NGX_OK;
 }
 
 
@@ -232,7 +452,7 @@ ngx_slab_init(ngx_slab_pool_t *pool)
     slots = ngx_slab_slots(pool);
 
     p = (u_char *) slots;
-    size = pool->end - p;
+    size = (size_t) ((uintptr_t) pool->end - (uintptr_t) p);
 
     ngx_slab_junk(p, size);
 
@@ -273,7 +493,8 @@ ngx_slab_init(ngx_slab_pool_t *pool)
     pool->start = ngx_align_ptr(p + pages * sizeof(ngx_slab_page_t),
                                 ngx_pagesize);
 
-    m = pages - (pool->end - pool->start) / ngx_pagesize;
+    m = pages - ((uintptr_t) pool->end - (uintptr_t) pool->start)
+              / ngx_pagesize;
     if (m > 0) {
         pages -= m;
         page->slab = pages;
@@ -307,9 +528,10 @@ void *
 ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
 {
     size_t            s;
-    uintptr_t         p, m, mask, *bitmap;
+    uintptr_t         m, mask, *bitmap;
+    void             *p;
     ngx_uint_t        i, n, slot, shift, map;
-    ngx_slab_page_t  *page, *prev, *slots;
+    ngx_slab_page_t  *page, *slots;
 
     if (size > ngx_slab_max_size) {
 
@@ -319,10 +541,10 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
         page = ngx_slab_alloc_pages(pool, (size >> ngx_pagesize_shift)
                                           + ((size % ngx_pagesize) ? 1 : 0));
         if (page) {
-            p = ngx_slab_page_addr(pool, page);
+            p = (void *) ngx_slab_page_addr(pool, page);
 
         } else {
-            p = 0;
+            p = NULL;
         }
 
         goto done;
@@ -342,6 +564,8 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
 
     ngx_log_debug2(NGX_LOG_DEBUG_ALLOC, ngx_cycle->log, 0,
                    "slab alloc: %uz slot: %ui", size, slot);
+
+retry_slot:
 
     slots = ngx_slab_slots(pool);
     page = (ngx_slab_page_t *) ngx_slab_ptr(pool, slots[slot].next);
@@ -367,31 +591,26 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
 
                         i = (n * 8 * sizeof(uintptr_t) + i) << shift;
 
-                        p = (uintptr_t) bitmap + i;
+                        p = (u_char *) bitmap + i;
 
                         ngx_slab_stats(pool)[slot].used++;
 
-                        if (bitmap[n] == NGX_SLAB_BUSY) {
+                       if (bitmap[n] == NGX_SLAB_BUSY) {
                             for (n = n + 1; n < map; n++) {
                                 if (bitmap[n] != NGX_SLAB_BUSY) {
                                     goto done;
                                 }
                             }
 
-                            prev = ngx_slab_list_prev(pool, page);
-
-                            if (!ngx_slab_prev_is_valid(pool, prev)) {
+                            if (ngx_slab_unlink_slot_page(pool, slot, page,
+                                                          NGX_SLAB_SMALL)
+                                != NGX_OK)
+                            {
                                 ngx_slab_error(pool, NGX_LOG_ALERT,
-                                               "ngx_slab_alloc(): invalid predecessor");
-                                p = 0;
+                                               "ngx_slab_alloc(): invalid small slot predecessor");
+                                p = NULL;
                                 goto done;
                             }
-
-                            prev->next = page->next;
-                            ngx_slab_set_prev(pool, page->next, prev, ngx_slab_get_type(page));
-
-                            page->next = NULL;
-                            ngx_slab_set_prev(pool, page, NULL, NGX_SLAB_SMALL);
                         }
 
                         goto done;
@@ -408,21 +627,16 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
 
                 page->slab |= m;
 
-                if (page->slab == NGX_SLAB_BUSY) {
-                    prev = ngx_slab_list_prev(pool, page);
-
-                    if (!ngx_slab_prev_is_valid(pool, prev)) {
+            if (page->slab == NGX_SLAB_BUSY) {
+                    if (ngx_slab_unlink_slot_page(pool, slot, page,
+                                                  NGX_SLAB_EXACT)
+                        != NGX_OK)
+                    {
                         ngx_slab_error(pool, NGX_LOG_ALERT,
-                                       "ngx_slab_alloc(): invalid predecessor");
-                        p = 0;
+                                       "ngx_slab_alloc(): invalid exact slot predecessor");
+                        p = NULL;
                         goto done;
                     }
-
-                    prev->next = page->next;
-                    ngx_slab_set_prev(pool, page->next, prev, ngx_slab_get_type(page));
-
-                    page->next = NULL;
-                    ngx_slab_set_prev(pool, page, NULL, NGX_SLAB_EXACT);
                 }
 
                 p = ngx_slab_page_addr(pool, page) + (i << shift);
@@ -447,21 +661,16 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
 
                 page->slab |= m;
 
-                if ((page->slab & NGX_SLAB_MAP_MASK) == mask) {
-                    prev = ngx_slab_list_prev(pool, page);
-
-                    if (!ngx_slab_prev_is_valid(pool, prev)) {
+           if ((page->slab & NGX_SLAB_MAP_MASK) == mask) {
+                    if (ngx_slab_unlink_slot_page(pool, slot, page,
+                                                  NGX_SLAB_BIG)
+                        != NGX_OK)
+                    {
                         ngx_slab_error(pool, NGX_LOG_ALERT,
-                                       "ngx_slab_alloc(): invalid predecessor");
-                        p = 0;
+                                       "ngx_slab_alloc(): invalid big slot predecessor");
+                        p = NULL;
                         goto done;
                     }
-
-                    prev->next = page->next;
-                    ngx_slab_set_prev(pool, page->next, prev, ngx_slab_get_type(page));
-
-                    page->next = NULL;
-                    ngx_slab_set_prev(pool, page, NULL, NGX_SLAB_BIG);
                 }
 
                 p = ngx_slab_page_addr(pool, page) + (i << shift);
@@ -472,8 +681,22 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
             }
         }
 
-        ngx_slab_error(pool, NGX_LOG_ALERT, "ngx_slab_alloc(): page is busy");
-        ngx_debug_point();
+        /*
+         * A fully busy page should not be reachable from a slot list.  In a
+         * normal allocator this is an invariant failure.  In Fil-C nginx, the
+         * earlier porting bugs could also leave a valid full page linked here.
+         * Repair the list and retry the allocation rather than poisoning the
+         * shared SSL cache indefinitely.
+         */
+        if (ngx_slab_unlink_slot_page(pool, slot, page,
+                                      ngx_slab_get_type(page))
+            == NGX_OK)
+        {
+            goto retry_slot;
+        }
+
+        ngx_slab_error(pool, NGX_LOG_ALERT,
+                       "ngx_slab_alloc(): page is busy and cannot be unlinked");
     }
 
     page = ngx_slab_alloc_pages(pool, 1);
@@ -551,20 +774,16 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
         }
     }
 
-    p = 0;
+    p = NULL;
 
     ngx_slab_stats(pool)[slot].fails++;
 
 done:
 
-    ngx_log_debug1(NGX_LOG_DEBUG_ALLOC, ngx_cycle->log, 0,
-                   "slab alloc: %p", (void *) p);
+   ngx_log_debug1(NGX_LOG_DEBUG_ALLOC, ngx_cycle->log, 0,
+                    "slab alloc: %p", (void *) p);
 
-#ifdef NGX_FILC_MODE
-    return (p) ? (void *) ((u_char *) (pool) + (p - (uintptr_t) (pool))) : NULL;
-#else
-    return (void *) p;
-#endif
+    return p;
 }
 
 
@@ -627,7 +846,7 @@ ngx_slab_free_locked(ngx_slab_pool_t *pool, void *p)
 
     n = ((u_char *) p - (u_char *) ngx_slab_ptr(pool, pool->start))
         >> ngx_pagesize_shift;
-    page = (ngx_slab_page_t *) ngx_slab_ptr(pool, &pool->pages[n]);
+    page = ngx_slab_page_at(pool, n);
     slab = page->slab;
     type = ngx_slab_page_type(page);
 
@@ -870,10 +1089,10 @@ ngx_slab_alloc_pages(ngx_slab_pool_t *pool, ngx_uint_t pages)
 
                 page[pages].slab = page->slab - pages;
                 page[pages].next = page->next;
-                p = ngx_slab_list_prev(pool, page);
+                p = ngx_slab_page_prev(pool, page);
                 ngx_slab_set_prev(pool, &page[pages], p, 0);
 
-                p = ngx_slab_list_prev(pool, page);
+                p = ngx_slab_page_prev(pool, page);
 
                 if (!ngx_slab_prev_is_valid(pool, p)) {
                     ngx_slab_error(pool, NGX_LOG_ALERT,
@@ -885,7 +1104,7 @@ ngx_slab_alloc_pages(ngx_slab_pool_t *pool, ngx_uint_t pages)
                 ngx_slab_set_prev(pool, page->next, &page[pages], 0);
 
             } else {
-                p = ngx_slab_list_prev(pool, page);
+                p = ngx_slab_page_prev(pool, page);
 
                 if (!ngx_slab_prev_is_valid(pool, p)) {
                     ngx_slab_error(pool, NGX_LOG_ALERT,
@@ -942,7 +1161,7 @@ ngx_slab_free_pages(ngx_slab_pool_t *pool, ngx_slab_page_t *page,
     }
 
    if (page->next) {
-        prev = ngx_slab_list_prev(pool, page);
+        prev = ngx_slab_page_prev(pool, page);
 
         if (!ngx_slab_prev_is_valid(pool, prev)) {
             ngx_slab_error(pool, NGX_LOG_ALERT,
@@ -964,7 +1183,7 @@ ngx_slab_free_pages(ngx_slab_pool_t *pool, ngx_slab_page_t *page,
                 pages += join->slab;
                 page->slab += join->slab;
 
-                prev = ngx_slab_list_prev(pool, join);
+                prev = ngx_slab_page_prev(pool, join);
 
                 if (!ngx_slab_prev_is_valid(pool, prev)) {
                     ngx_slab_error(pool, NGX_LOG_ALERT,
@@ -988,7 +1207,7 @@ ngx_slab_free_pages(ngx_slab_pool_t *pool, ngx_slab_page_t *page,
         if (ngx_slab_page_type(join) == NGX_SLAB_PAGE) {
 
             if (join->slab == NGX_SLAB_PAGE_FREE) {
-                join = ngx_slab_list_prev(pool, join);
+                join = ngx_slab_page_prev(pool, join);
 
                 if (!ngx_slab_page_is_valid(pool, join)) {
                     ngx_slab_error(pool, NGX_LOG_ALERT,
@@ -1001,7 +1220,7 @@ ngx_slab_free_pages(ngx_slab_pool_t *pool, ngx_slab_page_t *page,
                 pages += join->slab;
                 join->slab += page->slab;
 
-                prev = ngx_slab_list_prev(pool, join);
+                prev = ngx_slab_page_prev(pool, join);
 
                 if (!ngx_slab_prev_is_valid(pool, prev)) {
                     ngx_slab_error(pool, NGX_LOG_ALERT,
@@ -1037,5 +1256,10 @@ ngx_slab_free_pages(ngx_slab_pool_t *pool, ngx_slab_page_t *page,
 static void
 ngx_slab_error(ngx_slab_pool_t *pool, ngx_uint_t level, char *text)
 {
+#ifdef NGX_FILC_MODE
+    ngx_log_error(level, ngx_cycle->log, 0, "%s%s", text,
+                  (char *) ngx_slab_ptr(pool, pool->log_ctx));
+#else
     ngx_log_error(level, ngx_cycle->log, 0, "%s%s", text, pool->log_ctx);
+#endif
 }

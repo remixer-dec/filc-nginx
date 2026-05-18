@@ -9,6 +9,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 #include <nginx.h>
+#include <ngx_palloc.h>
 
 
 static ngx_http_variable_t *ngx_http_add_prefix_variable(ngx_conf_t *cf,
@@ -668,16 +669,7 @@ ngx_http_get_indexed_variable(ngx_http_request_t *r, ngx_uint_t index)
 ngx_http_variable_value_t *
 ngx_http_get_flushed_variable(ngx_http_request_t *r, ngx_uint_t index)
 {
-    ngx_http_core_main_conf_t  *cmcf;
     ngx_http_variable_value_t  *v;
-
-    cmcf = ngx_http_get_module_main_conf(r, ngx_http_core_module);
-
-    if (cmcf->variables.nelts <= index) {
-        ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
-                      "unknown flushed variable index: %ui", index);
-        return NULL;
-    }
 
     v = &r->variables[index];
 
@@ -914,9 +906,16 @@ static ngx_int_t
 ngx_http_variable_unknown_header_in(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data)
 {
+#ifdef NGX_FILC_MODE
+    return ngx_http_variable_unknown_header(r, v,
+                                            (ngx_str_t *) ngx_filc_ptr(data),
+                                            &r->headers_in.headers.part,
+                                            sizeof("http_") - 1);
+#else
     return ngx_http_variable_unknown_header(r, v, (ngx_str_t *) data,
                                             &r->headers_in.headers.part,
                                             sizeof("http_") - 1);
+#endif
 }
 
 
@@ -924,9 +923,16 @@ static ngx_int_t
 ngx_http_variable_unknown_header_out(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data)
 {
+#ifdef NGX_FILC_MODE
+    return ngx_http_variable_unknown_header(r, v,
+                                            (ngx_str_t *) ngx_filc_ptr(data),
+                                            &r->headers_out.headers.part,
+                                            sizeof("sent_http_") - 1);
+#else
     return ngx_http_variable_unknown_header(r, v, (ngx_str_t *) data,
                                             &r->headers_out.headers.part,
                                             sizeof("sent_http_") - 1);
+#endif
 }
 
 
@@ -934,9 +940,16 @@ static ngx_int_t
 ngx_http_variable_unknown_trailer_out(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data)
 {
+#ifdef NGX_FILC_MODE
+    return ngx_http_variable_unknown_header(r, v,
+                                            (ngx_str_t *) ngx_filc_ptr(data),
+                                            &r->headers_out.trailers.part,
+                                            sizeof("sent_trailer_") - 1);
+#else
     return ngx_http_variable_unknown_header(r, v, (ngx_str_t *) data,
                                             &r->headers_out.trailers.part,
                                             sizeof("sent_trailer_") - 1);
+#endif
 }
 
 
@@ -950,12 +963,21 @@ ngx_http_variable_unknown_header(ngx_http_request_t *r,
     ngx_uint_t        i, n;
     ngx_table_elt_t  *header, *h, **ph;
 
+#ifdef NGX_FILC_MODE
+    var = (ngx_str_t *) ngx_filc_ptr(var);
+    part = (ngx_list_part_t *) ngx_filc_ptr(part);
+#endif
+
     ph = &h;
 #if (NGX_SUPPRESS_WARN)
     len = 0;
 #endif
 
+#ifdef NGX_FILC_MODE
+    header = (ngx_table_elt_t *) ngx_filc_ptr(part->elts);
+#else
     header = part->elts;
+#endif
 
     for (i = 0; /* void */ ; i++) {
 
@@ -964,8 +986,13 @@ ngx_http_variable_unknown_header(ngx_http_request_t *r,
                 break;
             }
 
+#ifdef NGX_FILC_MODE
+            part = (ngx_list_part_t *) ngx_filc_ptr(part->next);
+            header = (ngx_table_elt_t *) ngx_filc_ptr(part->elts);
+#else
             part = part->next;
             header = part->elts;
+#endif
             i = 0;
         }
 
@@ -998,7 +1025,11 @@ ngx_http_variable_unknown_header(ngx_http_request_t *r,
 
         len += header[i].value.len + 2;
 
+#ifdef NGX_FILC_MODE
+        *ph = (ngx_table_elt_t *) ngx_filc_ptr(&header[i]);
+#else
         *ph = &header[i];
+#endif
         ph = &header[i].next;
     }
 

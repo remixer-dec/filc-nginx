@@ -792,7 +792,16 @@ static u_char *
 ngx_http_log_copy_long(ngx_http_request_t *r, u_char *buf,
     ngx_http_log_op_t *op)
 {
+#ifdef NGX_FILC_MODE
+    u_char  *data;
+
+    op = (ngx_http_log_op_t *) ngx_filc_ptr(op);
+    data = (u_char *) ngx_filc_ptr((void *) (uintptr_t) op->data);
+
+    return ngx_cpymem(buf, data, op->len);
+#else
     return ngx_cpymem(buf, (u_char *) op->data, op->len);
+#endif
 }
 
 
