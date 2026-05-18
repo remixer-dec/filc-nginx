@@ -668,7 +668,16 @@ ngx_http_get_indexed_variable(ngx_http_request_t *r, ngx_uint_t index)
 ngx_http_variable_value_t *
 ngx_http_get_flushed_variable(ngx_http_request_t *r, ngx_uint_t index)
 {
+    ngx_http_core_main_conf_t  *cmcf;
     ngx_http_variable_value_t  *v;
+
+    cmcf = ngx_http_get_module_main_conf(r, ngx_http_core_module);
+
+    if (cmcf->variables.nelts <= index) {
+        ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
+                      "unknown flushed variable index: %ui", index);
+        return NULL;
+    }
 
     v = &r->variables[index];
 

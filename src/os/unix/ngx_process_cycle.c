@@ -68,6 +68,8 @@ static ngx_cache_manager_ctx_t  ngx_cache_loader_ctx = {
 static ngx_cycle_t      ngx_exit_cycle;
 static ngx_log_t        ngx_exit_log;
 static ngx_open_file_t  ngx_exit_log_file;
+static time_t           ngx_worker_crash_time[NGX_MAX_PROCESSES];
+static ngx_uint_t       ngx_worker_crash_count[NGX_MAX_PROCESSES];
 
 
 void
@@ -535,6 +537,8 @@ ngx_reap_children(ngx_cycle_t *cycle)
 {
     ngx_int_t         i, n;
     ngx_uint_t        live;
+    int               signo;
+    time_t            now;
     ngx_channel_t     ch;
     ngx_core_conf_t  *ccf;
 
@@ -595,6 +599,30 @@ ngx_reap_children(ngx_cycle_t *cycle)
                 && !ngx_terminate
                 && !ngx_quit)
             {
+                if (WIFSIGNALED(ngx_processes[i].status)) {
+                    signo = WTERMSIG(ngx_processes[i].status);
+                    now = ngx_time();
+
+                    if (ngx_worker_crash_time[i] == now) {
+                        ngx_worker_crash_count[i]++;
+                    } else {
+                        ngx_worker_crash_time[i] = now;
+                        ngx_worker_crash_count[i] = 1;
+                    }
+
+                    if (ngx_worker_crash_count[i] >= 3) {
+                        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0,
+                                      "worker slot %i repeatedly exited on signal %d; "
+                                      "disabling respawn to avoid crash loop",
+                                      i, signo);
+                        ngx_processes[i].respawn = 0;
+                        continue;
+                    }
+                } else {
+                    ngx_worker_crash_time[i] = 0;
+                    ngx_worker_crash_count[i] = 0;
+                }
+
                 if (ngx_spawn_process(cycle, ngx_processes[i].proc,
                                       ngx_processes[i].data,
                                       ngx_processes[i].name, i)

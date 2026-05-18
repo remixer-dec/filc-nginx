@@ -192,6 +192,7 @@ typedef struct {
     ngx_queue_t                 expire_queue;
     ngx_ssl_ticket_key_t        ticket_keys[3];
     time_t                      fail_time;
+    ngx_pid_t                   last_sanity_pid;
 } ngx_ssl_session_cache_t;
 
 

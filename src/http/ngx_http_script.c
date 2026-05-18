@@ -63,9 +63,21 @@ ngx_http_complex_value(ngx_http_request_t *r, ngx_http_complex_value_t *val,
     ngx_http_script_len_code_pt   lcode;
     ngx_http_script_engine_t      e;
 
+    if (val == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "http complex value called with NULL value");
+        return NGX_ERROR;
+    }
+
     if (val->lengths == NULL) {
         *value = val->value;
         return NGX_OK;
+    }
+
+    if (val->values == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "http complex value has lengths but no values");
+        return NGX_ERROR;
     }
 
     ngx_http_script_flush_complex_value(r, val);
@@ -260,6 +272,12 @@ ngx_http_compile_complex_value(ngx_http_compile_complex_value_t *ccv)
 
     ccv->complex_value->lengths = lengths.elts;
     ccv->complex_value->values = values.elts;
+
+    if ((ccv->complex_value->lengths == NULL) != (ccv->complex_value->values == NULL)) {
+        ngx_conf_log_error(NGX_LOG_EMERG, ccv->cf, 0,
+                           "http complex value compilation produced inconsistent bytecode");
+        return NGX_ERROR;
+    }
 
     return NGX_OK;
 }
