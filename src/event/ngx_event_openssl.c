@@ -4816,6 +4816,7 @@ ngx_ssl_session_cache_init(ngx_shm_zone_t *shm_zone, void *data)
      * a capability source once stored in the shared pool.
      */
     ngx_slab_filc_register(shpool, shm_zone->shm.addr, shm_zone->shm.size);
+    ngx_slab_filc_set_log_ctx(shpool, " in SSL session shared cache");
     shpool->addr = shm_zone->shm.addr;
 #endif
 
@@ -4951,6 +4952,7 @@ ngx_ssl_new_session(ngx_ssl_conn_t *ssl_conn, ngx_ssl_session_t *sess)
 
 #ifdef NGX_FILC_MODE
     ngx_slab_filc_register(shpool, shm_zone->shm.addr, shm_zone->shm.size);
+    ngx_slab_filc_set_log_ctx(shpool, " in SSL session shared cache");
     cache = ngx_ssl_scache_cache(shpool, cache);
 #endif
 
@@ -5102,8 +5104,8 @@ ngx_ssl_get_cached_session(ngx_ssl_conn_t *ssl_conn,
     ngx_log_debug2(NGX_LOG_DEBUG_EVENT, c->log, 0,
                     "ssl get session: %08XD:%d", hash, len);
 
-    shm_zone = SSL_CTX_get_ex_data(c->ssl->session_ctx,
-                                    ngx_ssl_session_cache_index);
+   shm_zone = SSL_CTX_get_ex_data(c->ssl->session_ctx,
+                                     ngx_ssl_session_cache_index);
 
     cache = shm_zone->data;
 
@@ -5115,6 +5117,7 @@ ngx_ssl_get_cached_session(ngx_ssl_conn_t *ssl_conn,
     u_char       *session;
 
     ngx_slab_filc_register(shpool, shm_zone->shm.addr, shm_zone->shm.size);
+    ngx_slab_filc_set_log_ctx(shpool, " in SSL session shared cache");
     cache = ngx_ssl_scache_cache(shpool, cache);
 #endif
 
@@ -5281,7 +5284,7 @@ ngx_ssl_remove_session(SSL_CTX *ssl, ngx_ssl_session_t *sess)
     hash = ngx_crc32_short(id, len);
 
   ngx_log_debug2(NGX_LOG_DEBUG_EVENT, ngx_cycle->log, 0,
-                     "ssl remove session: %08XD:%ud", hash, len);
+                      "ssl remove session: %08XD:%ud", hash, len);
 
     shpool = (ngx_slab_pool_t *) shm_zone->shm.addr;
 
@@ -5289,6 +5292,7 @@ ngx_ssl_remove_session(SSL_CTX *ssl, ngx_ssl_session_t *sess)
     u_char       *session;
 
     ngx_slab_filc_register(shpool, shm_zone->shm.addr, shm_zone->shm.size);
+    ngx_slab_filc_set_log_ctx(shpool, " in SSL session shared cache");
     cache = ngx_ssl_scache_cache(shpool, cache);
 #endif
 
@@ -5835,6 +5839,7 @@ ngx_ssl_rotate_ticket_keys(SSL_CTX *ssl_ctx, ngx_log_t *log)
 
 #ifdef NGX_FILC_MODE
     ngx_slab_filc_register(shpool, shm_zone->shm.addr, shm_zone->shm.size);
+    ngx_slab_filc_set_log_ctx(shpool, " in SSL session shared cache");
 #endif
 
     ngx_shmtx_lock(&shpool->mutex);

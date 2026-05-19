@@ -66,6 +66,7 @@ void *ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size);
 
 #ifdef NGX_FILC_MODE
 void ngx_slab_filc_register(ngx_slab_pool_t *pool, void *addr, size_t size);
+void ngx_slab_filc_set_log_ctx(ngx_slab_pool_t *pool, char *log_ctx);
 void *ngx_slab_filc_ptr(ngx_slab_pool_t *pool, const void *p);
 #endif
 

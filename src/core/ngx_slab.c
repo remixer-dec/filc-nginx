@@ -53,6 +53,7 @@ typedef struct {
     uintptr_t  base;
     uintptr_t  end;
     void      *cap;
+    char      *log_ctx;
 } ngx_slab_filc_map_t;
 
 
@@ -103,6 +104,45 @@ ngx_slab_filc_find(ngx_slab_pool_t *pool)
 
 
 void
+ngx_slab_filc_set_log_ctx(ngx_slab_pool_t *pool, char *log_ctx)
+{
+    ngx_slab_filc_map_t  *map;
+
+    map = ngx_slab_filc_find(pool);
+
+    if (map == NULL) {
+        return;
+    }
+
+    /*
+     * This must be a local process pointer, not a pointer loaded from
+     * the shared slab pool.  The slab panic path must not retag or
+     * dereference shared-memory metadata just to print diagnostics.
+     */
+    if (log_ctx != NULL && zhasvalidcap(log_ctx)) {
+        map->log_ctx = log_ctx;
+    } else {
+        map->log_ctx = "";
+    }
+}
+
+
+static ngx_inline char *
+ngx_slab_filc_log_ctx(ngx_slab_pool_t *pool)
+{
+    ngx_slab_filc_map_t  *map;
+
+    map = ngx_slab_filc_find(pool);
+
+    if (map != NULL && map->log_ctx != NULL && zhasvalidcap(map->log_ctx)) {
+        return map->log_ctx;
+    }
+
+    return "";
+}
+
+
+void
 ngx_slab_filc_register(ngx_slab_pool_t *pool, void *addr, size_t size)
 {
     uintptr_t   base, end;
@@ -127,6 +167,7 @@ ngx_slab_filc_register(ngx_slab_pool_t *pool, void *addr, size_t size)
         ngx_slab_filc_maps[ngx_slab_filc_nmaps].base = base;
         ngx_slab_filc_maps[ngx_slab_filc_nmaps].end = end;
         ngx_slab_filc_maps[ngx_slab_filc_nmaps].cap = addr;
+        ngx_slab_filc_maps[ngx_slab_filc_nmaps].log_ctx = "";
         ngx_slab_filc_nmaps++;
         return;
     }
@@ -1258,7 +1299,7 @@ ngx_slab_error(ngx_slab_pool_t *pool, ngx_uint_t level, char *text)
 {
 #ifdef NGX_FILC_MODE
     ngx_log_error(level, ngx_cycle->log, 0, "%s%s", text,
-                  (char *) ngx_slab_ptr(pool, pool->log_ctx));
+                  ngx_slab_filc_log_ctx(pool));
 #else
     ngx_log_error(level, ngx_cycle->log, 0, "%s%s", text, pool->log_ctx);
 #endif
