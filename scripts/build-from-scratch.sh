@@ -138,7 +138,7 @@ build_nginx() {
     cd "$NGINX_DIR"
     rm -rf objs-filc
 
-    COMMON_CC_OPT="-DNGX_FILC_MODE -g -O2 -Werror=implicit-function-declaration -ffile-prefix-map=$NGINX_DIR=. -fstack-protector-strong -fstack-clash-protection -Wformat -Werror=format-security -fcf-protection -fPIC -I$PREFIX/include"
+    COMMON_CC_OPT="-DNGX_FILC_MODE -g -O2 -Werror=implicit-function-declaration -ffile-prefix-map=$NGINX_DIR=. -fstack-protector-strong -fstack-clash-protection -Wformat -Werror=format-security -Wno-error=sign-compare -fcf-protection -fPIC -I$PREFIX/include"
     COMMON_LD_OPT="-Wl,-z,relro -Wl,-z,now -Wl,--as-needed -pie -L$PREFIX/lib -Wl,-rpath,$PREFIX/lib"
 
     ./auto/configure \
