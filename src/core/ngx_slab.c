@@ -606,8 +606,6 @@ ngx_slab_alloc_locked(ngx_slab_pool_t *pool, size_t size)
     ngx_log_debug2(NGX_LOG_DEBUG_ALLOC, ngx_cycle->log, 0,
                    "slab alloc: %uz slot: %ui", size, slot);
 
-retry_slot:
-
     slots = ngx_slab_slots(pool);
     page = (ngx_slab_page_t *) ngx_slab_ptr(pool, slots[slot].next);
 
@@ -722,13 +720,9 @@ retry_slot:
             }
         }
 
- #ifdef NGX_FILC_MODE
-        ngx_slab_filc_invariant_error(pool, NGX_LOG_ALERT,
-            "ngx_slab_alloc(): fully busy page found in slot list", slot, page);
-#else
         ngx_slab_error(pool, NGX_LOG_ALERT,
                        "ngx_slab_alloc(): fully busy page found in slot list");
-#endif
+
         p = NULL;
         goto done;
     }
