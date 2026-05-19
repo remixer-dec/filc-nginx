@@ -8,6 +8,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_stream.h>
+#include <ngx_palloc.h>
 
 
 static ngx_int_t ngx_stream_script_init_arrays(
@@ -30,7 +31,11 @@ static void ngx_stream_script_full_name_code(ngx_stream_script_engine_t *e);
 
 #define ngx_stream_script_exit  (u_char *) &ngx_stream_script_exit_code
 
+#ifdef NGX_FILC_MODE
+static ngx_stream_script_code_pt ngx_stream_script_exit_code = NULL;
+#else
 static uintptr_t ngx_stream_script_exit_code = (uintptr_t) NULL;
+#endif
 
 
 void
@@ -39,7 +44,12 @@ ngx_stream_script_flush_complex_value(ngx_stream_session_t *s,
 {
     ngx_uint_t *index;
 
+#ifdef NGX_FILC_MODE
+    val = (ngx_stream_complex_value_t *) ngx_filc_ptr(val);
+    index = (ngx_uint_t *) ngx_filc_ptr(val->flushes);
+#else
     index = val->flushes;
+#endif
 
     if (index) {
         while (*index != (ngx_uint_t) -1) {
@@ -63,9 +73,17 @@ ngx_stream_complex_value(ngx_stream_session_t *s,
     ngx_stream_script_code_pt      code;
     ngx_stream_script_engine_t     e;
     ngx_stream_script_len_code_pt  lcode;
+    ngx_int_t                      rc;
+
+#ifdef NGX_FILC_MODE
+    val = (ngx_stream_complex_value_t *) ngx_filc_ptr(val);
+#endif
 
     if (val->lengths == NULL) {
         *value = val->value;
+#ifdef NGX_FILC_MODE
+        value->data = (u_char *) ngx_filc_ptr(value->data);
+#endif
         return NGX_OK;
     }
 
@@ -73,14 +91,31 @@ ngx_stream_complex_value(ngx_stream_session_t *s,
 
     ngx_memzero(&e, sizeof(ngx_stream_script_engine_t));
 
+#ifdef NGX_FILC_MODE
+    e.ip = (u_char *) ngx_filc_ptr(val->lengths);
+#else
     e.ip = val->lengths;
+#endif
     e.session = s;
     e.flushed = 1;
 
     len = 0;
 
-    while (*(uintptr_t *) e.ip) {
+    for ( ;; ) {
+#ifdef NGX_FILC_MODE
+        rc = ngx_stream_script_get_len_code(&e, &lcode);
+        if (rc == NGX_DONE) {
+            break;
+        }
+        if (rc == NGX_ERROR) {
+            return NGX_ERROR;
+        }
+#else
+        if (*(uintptr_t *) e.ip == 0) {
+            break;
+        }
         lcode = *(ngx_stream_script_len_code_pt *) e.ip;
+#endif
         len += lcode(&e);
     }
 
@@ -90,12 +125,29 @@ ngx_stream_complex_value(ngx_stream_session_t *s,
         return NGX_ERROR;
     }
 
+#ifdef NGX_FILC_MODE
+    e.ip = (u_char *) ngx_filc_ptr(val->values);
+#else
     e.ip = val->values;
+#endif
     e.pos = value->data;
     e.buf = *value;
 
-    while (*(uintptr_t *) e.ip) {
+    for ( ;; ) {
+#ifdef NGX_FILC_MODE
+        rc = ngx_stream_script_get_code(&e, &code);
+        if (rc == NGX_DONE) {
+            break;
+        }
+        if (rc == NGX_ERROR) {
+            return NGX_ERROR;
+        }
+#else
+        if (*(uintptr_t *) e.ip == 0) {
+            break;
+        }
         code = *(ngx_stream_script_code_pt *) e.ip;
+#endif
         code((ngx_stream_script_engine_t *) &e);
     }
 
@@ -188,9 +240,9 @@ ngx_stream_compile_complex_value(ngx_stream_compile_complex_value_t *ccv)
         return NGX_ERROR;
     }
 
-    n = nv * (2 * sizeof(ngx_stream_script_copy_code_t)
-                  + sizeof(ngx_stream_script_var_code_t))
-        + sizeof(uintptr_t);
+  n = nv * (2 * sizeof(ngx_stream_script_copy_code_t)
+                   + sizeof(ngx_stream_script_var_code_t))
+        + NGX_STREAM_SCRIPT_LEN_SENTINEL_SIZE;
 
     if (ngx_array_init(&lengths, ccv->cf->pool, n, 1) != NGX_OK) {
         return NGX_ERROR;
@@ -198,10 +250,10 @@ ngx_stream_compile_complex_value(ngx_stream_compile_complex_value_t *ccv)
 
     n = (nv * (2 * sizeof(ngx_stream_script_copy_code_t)
                    + sizeof(ngx_stream_script_var_code_t))
-                + sizeof(uintptr_t)
-                + v->len
-                + sizeof(uintptr_t) - 1)
-            & ~(sizeof(uintptr_t) - 1);
+                 + NGX_STREAM_SCRIPT_CODE_SENTINEL_SIZE
+                 + v->len
+                 + NGX_STREAM_SCRIPT_CODE_ALIGN - 1)
+             & ~(NGX_STREAM_SCRIPT_CODE_ALIGN - 1);
 
     if (ngx_array_init(&values, ccv->cf->pool, n, 1) != NGX_OK) {
         return NGX_ERROR;
@@ -496,6 +548,7 @@ ngx_stream_script_run(ngx_stream_session_t *s, ngx_str_t *value,
     ngx_stream_script_engine_t      e;
     ngx_stream_core_main_conf_t    *cmcf;
     ngx_stream_script_len_code_pt   lcode;
+    ngx_int_t                       rc;
 
     cmcf = ngx_stream_get_module_main_conf(s, ngx_stream_core_module);
 
@@ -508,12 +561,29 @@ ngx_stream_script_run(ngx_stream_session_t *s, ngx_str_t *value,
 
     ngx_memzero(&e, sizeof(ngx_stream_script_engine_t));
 
+#ifdef NGX_FILC_MODE
+    e.ip = (u_char *) ngx_filc_ptr(code_lengths);
+#else
     e.ip = code_lengths;
+#endif
     e.session = s;
     e.flushed = 1;
 
-    while (*(uintptr_t *) e.ip) {
+    for ( ;; ) {
+#ifdef NGX_FILC_MODE
+        rc = ngx_stream_script_get_len_code(&e, &lcode);
+        if (rc == NGX_DONE) {
+            break;
+        }
+        if (rc == NGX_ERROR) {
+            return NULL;
+        }
+#else
+        if (*(uintptr_t *) e.ip == 0) {
+            break;
+        }
         lcode = *(ngx_stream_script_len_code_pt *) e.ip;
+#endif
         len += lcode(&e);
     }
 
@@ -524,11 +594,28 @@ ngx_stream_script_run(ngx_stream_session_t *s, ngx_str_t *value,
         return NULL;
     }
 
+#ifdef NGX_FILC_MODE
+    e.ip = (u_char *) ngx_filc_ptr(code_values);
+#else
     e.ip = code_values;
+#endif
     e.pos = value->data;
 
-    while (*(uintptr_t *) e.ip) {
+    for ( ;; ) {
+#ifdef NGX_FILC_MODE
+        rc = ngx_stream_script_get_code(&e, &code);
+        if (rc == NGX_DONE) {
+            break;
+        }
+        if (rc == NGX_ERROR) {
+            return NULL;
+        }
+#else
+        if (*(uintptr_t *) e.ip == 0) {
+            break;
+        }
         code = *(ngx_stream_script_code_pt *) e.ip;
+#endif
         code((ngx_stream_script_engine_t *) &e);
     }
 
@@ -567,10 +654,10 @@ ngx_stream_script_init_arrays(ngx_stream_script_compile_t *sc)
         }
     }
 
-    if (*sc->lengths == NULL) {
+if (*sc->lengths == NULL) {
         n = sc->variables * (2 * sizeof(ngx_stream_script_copy_code_t)
-                             + sizeof(ngx_stream_script_var_code_t))
-            + sizeof(uintptr_t);
+                              + sizeof(ngx_stream_script_var_code_t))
+            + NGX_STREAM_SCRIPT_LEN_SENTINEL_SIZE;
 
         *sc->lengths = ngx_array_create(sc->cf->pool, n, 1);
         if (*sc->lengths == NULL) {
@@ -580,11 +667,11 @@ ngx_stream_script_init_arrays(ngx_stream_script_compile_t *sc)
 
     if (*sc->values == NULL) {
         n = (sc->variables * (2 * sizeof(ngx_stream_script_copy_code_t)
-                              + sizeof(ngx_stream_script_var_code_t))
-                + sizeof(uintptr_t)
-                + sc->source->len
-                + sizeof(uintptr_t) - 1)
-            & ~(sizeof(uintptr_t) - 1);
+                               + sizeof(ngx_stream_script_var_code_t))
+                 + NGX_STREAM_SCRIPT_CODE_SENTINEL_SIZE
+                 + sc->source->len
+                 + NGX_STREAM_SCRIPT_CODE_ALIGN - 1)
+             & ~(NGX_STREAM_SCRIPT_CODE_ALIGN - 1);
 
         *sc->values = ngx_array_create(sc->cf->pool, n, 1);
         if (*sc->values == NULL) {
@@ -602,7 +689,12 @@ static ngx_int_t
 ngx_stream_script_done(ngx_stream_script_compile_t *sc)
 {
     ngx_str_t    zero;
+#ifdef NGX_FILC_MODE
+    ngx_stream_script_code_pt      *code;
+    ngx_stream_script_len_code_pt  *lcode;
+#else
     uintptr_t   *code;
+#endif
 
     if (sc->zero) {
 
@@ -620,24 +712,46 @@ ngx_stream_script_done(ngx_stream_script_compile_t *sc)
         }
     }
 
-    if (sc->complete_lengths) {
+ if (sc->complete_lengths) {
+#ifdef NGX_FILC_MODE
+        lcode = ngx_stream_script_add_code(*sc->lengths,
+                                           sizeof(ngx_stream_script_len_code_pt),
+                                           NULL);
+        if (lcode == NULL) {
+            return NGX_ERROR;
+        }
+
+        *lcode = NULL;
+#else
         code = ngx_stream_script_add_code(*sc->lengths, sizeof(uintptr_t),
-                                          NULL);
+                                           NULL);
         if (code == NULL) {
             return NGX_ERROR;
         }
 
         *code = (uintptr_t) NULL;
+#endif
     }
 
     if (sc->complete_values) {
-        code = ngx_stream_script_add_code(*sc->values, sizeof(uintptr_t),
+#ifdef NGX_FILC_MODE
+        code = ngx_stream_script_add_code(*sc->values,
+                                          sizeof(ngx_stream_script_code_pt),
                                           &sc->main);
         if (code == NULL) {
             return NGX_ERROR;
         }
 
+        *code = NULL;
+#else
+        code = ngx_stream_script_add_code(*sc->values, sizeof(uintptr_t),
+                                           &sc->main);
+        if (code == NULL) {
+            return NGX_ERROR;
+        }
+
         *code = (uintptr_t) NULL;
+#endif
     }
 
     return NGX_OK;
@@ -686,12 +800,17 @@ ngx_stream_script_add_copy_code(ngx_stream_script_compile_t *sc,
         return NGX_ERROR;
     }
 
+#ifdef NGX_FILC_MODE
+    *(ngx_stream_script_len_code_pt *) code = ngx_stream_script_copy_len_code;
+#else
     code->code = (ngx_stream_script_code_pt) (void *)
-                                               ngx_stream_script_copy_len_code;
+                                                ngx_stream_script_copy_len_code;
+#endif
     code->len = len;
 
-    size = (sizeof(ngx_stream_script_copy_code_t) + len + sizeof(uintptr_t) - 1)
-            & ~(sizeof(uintptr_t) - 1);
+    size = (sizeof(ngx_stream_script_copy_code_t) + len
+            + NGX_STREAM_SCRIPT_CODE_ALIGN - 1)
+            & ~(NGX_STREAM_SCRIPT_CODE_ALIGN - 1);
 
     code = ngx_stream_script_add_code(*sc->values, size, &sc->main);
     if (code == NULL) {
@@ -741,8 +860,9 @@ ngx_stream_script_copy_code(ngx_stream_script_engine_t *e)
                           code->len);
     }
 
-    e->ip += sizeof(ngx_stream_script_copy_code_t)
-          + ((code->len + sizeof(uintptr_t) - 1) & ~(sizeof(uintptr_t) - 1));
+e->ip += sizeof(ngx_stream_script_copy_code_t)
+           + ((code->len + NGX_STREAM_SCRIPT_CODE_ALIGN - 1)
+              & ~(NGX_STREAM_SCRIPT_CODE_ALIGN - 1));
 
     ngx_log_debug2(NGX_LOG_DEBUG_STREAM, e->session->connection->log, 0,
                    "stream script copy: \"%*s\"", e->pos - p, p);
@@ -777,8 +897,13 @@ ngx_stream_script_add_var_code(ngx_stream_script_compile_t *sc, ngx_str_t *name)
         return NGX_ERROR;
     }
 
+#ifdef NGX_FILC_MODE
+    *(ngx_stream_script_len_code_pt *) code =
+        ngx_stream_script_copy_var_len_code;
+#else
     code->code = (ngx_stream_script_code_pt) (void *)
-                                           ngx_stream_script_copy_var_len_code;
+                                            ngx_stream_script_copy_var_len_code;
+#endif
     code->index = (uintptr_t) index;
 
     code = ngx_stream_script_add_code(*sc->values,
@@ -867,8 +992,13 @@ ngx_stream_script_add_capture_code(ngx_stream_script_compile_t *sc,
         return NGX_ERROR;
     }
 
+#ifdef NGX_FILC_MODE
+    *(ngx_stream_script_len_code_pt *) code =
+        ngx_stream_script_copy_capture_len_code;
+#else
     code->code = (ngx_stream_script_code_pt) (void *)
-                                       ngx_stream_script_copy_capture_len_code;
+                                        ngx_stream_script_copy_capture_len_code;
+#endif
     code->n = 2 * n;
 
 
@@ -959,8 +1089,13 @@ ngx_stream_script_add_full_name_code(ngx_stream_script_compile_t *sc)
         return NGX_ERROR;
     }
 
+#ifdef NGX_FILC_MODE
+    *(ngx_stream_script_len_code_pt *) code =
+        ngx_stream_script_full_name_len_code;
+#else
     code->code = (ngx_stream_script_code_pt) (void *)
-                                          ngx_stream_script_full_name_len_code;
+                                           ngx_stream_script_full_name_len_code;
+#endif
     code->conf_prefix = sc->conf_prefix;
 
     code = ngx_stream_script_add_code(*sc->values,

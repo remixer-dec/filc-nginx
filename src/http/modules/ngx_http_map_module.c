@@ -8,11 +8,15 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <ngx_palloc.h>
 
 
 typedef struct {
     ngx_uint_t                  hash_max_size;
     ngx_uint_t                  hash_bucket_size;
+#ifdef NGX_FILC_MODE
+    ngx_array_t                *maps;
+#endif
 } ngx_http_map_conf_t;
 
 
@@ -41,6 +45,14 @@ typedef struct {
 
 static int ngx_libc_cdecl ngx_http_map_cmp_dns_wildcards(const void *one,
     const void *two);
+
+#ifdef NGX_FILC_MODE
+static uintptr_t ngx_http_map_filc_add(ngx_conf_t *cf,
+    ngx_http_map_ctx_t *map);
+static ngx_http_map_ctx_t *ngx_http_map_filc_get(ngx_http_request_t *r,
+    uintptr_t data);
+#endif
+
 static void *ngx_http_map_create_conf(ngx_conf_t *cf);
 static char *ngx_http_map_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_map(ngx_conf_t *cf, ngx_command_t *dummy, void *conf);
@@ -108,14 +120,22 @@ static ngx_int_t
 ngx_http_map_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     uintptr_t data)
 {
+#ifdef NGX_FILC_MODE
+    ngx_http_map_ctx_t  *map = ngx_http_map_filc_get(r, data);
+#else
     ngx_http_map_ctx_t  *map = (ngx_http_map_ctx_t *) data;
+#endif
 
     ngx_str_t                   val, str;
     ngx_http_complex_value_t   *cv;
     ngx_http_variable_value_t  *value;
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "http map started");
+                    "http map started");
+
+    if (map == NULL) {
+        return NGX_ERROR;
+    }
 
     if (ngx_http_complex_value(r, &map->value, &val) != NGX_OK) {
         return NGX_ERROR;
@@ -167,6 +187,9 @@ ngx_http_map_create_conf(ngx_conf_t *cf)
 
     mcf->hash_max_size = NGX_CONF_UNSET_UINT;
     mcf->hash_bucket_size = NGX_CONF_UNSET_UINT;
+#ifdef NGX_FILC_MODE
+    mcf->maps = NULL;
+#endif
 
     return mcf;
 }
@@ -233,7 +256,14 @@ ngx_http_map_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     }
 
     var->get_handler = ngx_http_map_variable;
+#ifdef NGX_FILC_MODE
+    var->data = ngx_http_map_filc_add(cf, map);
+    if (var->data == 0) {
+        return NGX_CONF_ERROR;
+    }
+#else
     var->data = (uintptr_t) map;
+#endif
 
     pool = ngx_create_pool(NGX_DEFAULT_POOL_SIZE, cf->log);
     if (pool == NULL) {
@@ -375,6 +405,60 @@ ngx_http_map_cmp_dns_wildcards(const void *one, const void *two)
 
     return ngx_dns_strcmp(first->key.data, second->key.data);
 }
+
+
+#ifdef NGX_FILC_MODE
+
+static uintptr_t
+ngx_http_map_filc_add(ngx_conf_t *cf, ngx_http_map_ctx_t *map)
+{
+    ngx_http_map_conf_t   *mcf;
+    ngx_http_map_ctx_t   **slot;
+
+    mcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_map_module);
+
+    if (mcf->maps == NULL) {
+        mcf->maps = ngx_array_create(cf->pool, 4,
+                                     sizeof(ngx_http_map_ctx_t *));
+        if (mcf->maps == NULL) {
+            return 0;
+        }
+    }
+
+    slot = ngx_array_push(mcf->maps);
+    if (slot == NULL) {
+        return 0;
+    }
+
+    *slot = map;
+
+    /*
+     * Zero is reserved as invalid, so store handle + 1.
+     */
+    return mcf->maps->nelts;
+}
+
+
+static ngx_http_map_ctx_t *
+ngx_http_map_filc_get(ngx_http_request_t *r, uintptr_t data)
+{
+    ngx_http_map_conf_t   *mcf;
+    ngx_http_map_ctx_t   **maps;
+
+    mcf = ngx_http_get_module_main_conf(r, ngx_http_map_module);
+
+    if (mcf == NULL || mcf->maps == NULL || data == 0
+        || data > mcf->maps->nelts)
+    {
+        return NULL;
+    }
+
+    maps = mcf->maps->elts;
+
+    return maps[data - 1];
+}
+
+#endif
 
 
 static char *

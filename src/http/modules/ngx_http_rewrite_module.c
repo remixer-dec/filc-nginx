@@ -8,6 +8,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <ngx_palloc.h>
 
 #include <stdfil.h>
 
@@ -140,7 +141,7 @@ ngx_http_rewrite_handler(ngx_http_request_t *r)
 {
     ngx_int_t                     index;
     ngx_http_script_code_pt       code;
-    ngx_http_script_engine_t     *e;
+    ngx_http_script_engine_t      e;
     ngx_http_core_srv_conf_t     *cscf;
     ngx_http_core_main_conf_t    *cmcf;
     ngx_http_rewrite_loc_conf_t  *rlcf;
@@ -160,40 +161,42 @@ ngx_http_rewrite_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
-    e = ngx_pcalloc(r->pool, sizeof(ngx_http_script_engine_t));
-    if (e == NULL) {
+    ngx_memzero(&e, sizeof(ngx_http_script_engine_t));
+
+    e.sp = ngx_pcalloc(r->pool,
+                       rlcf->stack_size * sizeof(ngx_http_variable_value_t));
+    if (e.sp == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    e->sp = ngx_pcalloc(r->pool,
-                        rlcf->stack_size * sizeof(ngx_http_variable_value_t));
-    if (e->sp == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
+    e.ip = ngx_filc_ptr(rlcf->codes->elts);
+    e.request = r;
+    e.quote = 1;
+    e.log = rlcf->log;
+    e.status = NGX_DECLINED;
 
-    e->ip = rlcf->codes->elts;
-    e->request = r;
-    e->quote = 1;
-    e->log = rlcf->log;
-    e->status = NGX_DECLINED;
-
+ #ifdef NGX_FILC_MODE
     for ( ;; ) {
         ngx_int_t  rc;
 
-        rc = ngx_http_script_get_code(e, &code);
-
+        rc = ngx_http_script_get_code(&e, &code);
         if (rc == NGX_DONE) {
             break;
         }
-
         if (rc == NGX_ERROR) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
 
-        code(e);
+        code(&e);
     }
+#else
+    while (*(uintptr_t *) e.ip) {
+        code = *(ngx_http_script_code_pt *) e.ip;
+        code(&e);
+    }
+#endif
 
-    return e->status;
+    return e.status;
 }
 
 

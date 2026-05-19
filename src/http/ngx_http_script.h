@@ -89,6 +89,84 @@ typedef struct {
 typedef void (*ngx_http_script_code_pt) (ngx_http_script_engine_t *e);
 typedef size_t (*ngx_http_script_len_code_pt) (ngx_http_script_engine_t *e);
 
+
+#ifdef NGX_FILC_MODE
+
+/*
+ * Fil-C function pointers are capabilities.  Never load script opcodes through
+ * uintptr_t and never retag them with ngx_filc_ptr(); that only works for data
+ * pointers.  Retag only the bytecode storage address, then read the stored
+ * function pointer with its real function-pointer type.
+ */
+
+#define NGX_HTTP_SCRIPT_CODE_SENTINEL_SIZE                                    \
+    sizeof(ngx_http_script_code_pt)
+
+#define NGX_HTTP_SCRIPT_LEN_SENTINEL_SIZE                                     \
+    sizeof(ngx_http_script_len_code_pt)
+
+#define NGX_HTTP_SCRIPT_CODE_ALIGN                                            \
+    sizeof(ngx_http_script_code_pt)
+
+
+static ngx_inline ngx_int_t
+ngx_http_script_get_code(ngx_http_script_engine_t *e,
+    ngx_http_script_code_pt *code)
+{
+    ngx_http_script_code_pt  *slot;
+
+    if (e == NULL || e->ip == NULL || code == NULL) {
+        return NGX_ERROR;
+    }
+
+    slot = (ngx_http_script_code_pt *) ngx_filc_ptr(e->ip);
+    if (slot == NULL) {
+        return NGX_ERROR;
+    }
+
+    *code = *slot;
+
+    if (*code == NULL) {
+        return NGX_DONE;
+    }
+
+    return NGX_OK;
+}
+
+
+static ngx_inline ngx_int_t
+ngx_http_script_get_len_code(ngx_http_script_engine_t *e,
+    ngx_http_script_len_code_pt *code)
+{
+    ngx_http_script_len_code_pt  *slot;
+
+    if (e == NULL || e->ip == NULL || code == NULL) {
+        return NGX_ERROR;
+    }
+
+    slot = (ngx_http_script_len_code_pt *) ngx_filc_ptr(e->ip);
+    if (slot == NULL) {
+        return NGX_ERROR;
+    }
+
+    *code = *slot;
+
+    if (*code == NULL) {
+        return NGX_DONE;
+    }
+
+    return NGX_OK;
+}
+
+#else
+
+#define NGX_HTTP_SCRIPT_CODE_SENTINEL_SIZE  sizeof(uintptr_t)
+#define NGX_HTTP_SCRIPT_LEN_SENTINEL_SIZE   sizeof(uintptr_t)
+#define NGX_HTTP_SCRIPT_CODE_ALIGN          sizeof(uintptr_t)
+
+#endif
+
+
 typedef struct {
     ngx_http_script_code_pt     code;
 } ngx_http_script_ptr_code_t;
@@ -272,39 +350,5 @@ void ngx_http_script_set_var_code(ngx_http_script_engine_t *e);
 void ngx_http_script_var_set_handler_code(ngx_http_script_engine_t *e);
 void ngx_http_script_var_code(ngx_http_script_engine_t *e);
 void ngx_http_script_nop_code(ngx_http_script_engine_t *e);
-
-/*
- * Fil-C compatibility helpers: safely dispatch script bytecode function pointers.
- * In Fil-C's capability model, function pointers are capabilities wider than
- * uintptr_t. Reading them as uintptr_t may yield wrong data. Instead, read
- * them directly as function pointers and check for NULL (the sentinel).
- */
-
-static ngx_inline ngx_int_t
-ngx_http_script_get_code(ngx_http_script_engine_t *e,
-    ngx_http_script_code_pt *code)
-{
-    *code = *(ngx_http_script_code_pt *) e->ip;
-
-    if (*code == NULL) {
-        return NGX_DONE;
-    }
-
-    return NGX_OK;
-}
-
-
-static ngx_inline ngx_int_t
-ngx_http_script_get_len_code(ngx_http_script_engine_t *e,
-    ngx_http_script_len_code_pt *code)
-{
-    *code = *(ngx_http_script_len_code_pt *) e->ip;
-
-    if (*code == NULL) {
-        return NGX_DONE;
-    }
-
-    return NGX_OK;
-}
 
 #endif /* _NGX_HTTP_SCRIPT_H_INCLUDED_ */

@@ -28,6 +28,7 @@ struct ngx_stream_log_op_s {
     ngx_stream_log_op_getlen_pt  getlen;
     ngx_stream_log_op_run_pt     run;
     uintptr_t                    data;
+    u_char                      *literal;
 };
 
 
@@ -685,7 +686,7 @@ static u_char *
 ngx_stream_log_copy_long(ngx_stream_session_t *s, u_char *buf,
     ngx_stream_log_op_t *op)
 {
-    return ngx_cpymem(buf, (u_char *) op->data, op->len);
+    return ngx_cpymem(buf, op->literal, op->len);
 }
 
 
@@ -1350,6 +1351,8 @@ ngx_stream_log_compile_format(ngx_conf_t *cf, ngx_array_t *flushes,
                 return NGX_CONF_ERROR;
             }
 
+            ngx_memzero(op, sizeof(ngx_stream_log_op_t));
+
             data = &value[s].data[i];
 
             if (value[s].data[i] == '$') {
@@ -1453,7 +1456,7 @@ ngx_stream_log_compile_format(ngx_conf_t *cf, ngx_array_t *flushes,
                     }
 
                     ngx_memcpy(p, data, len);
-                    op->data = (uintptr_t) p;
+                    op->literal = p;
                 }
             }
         }

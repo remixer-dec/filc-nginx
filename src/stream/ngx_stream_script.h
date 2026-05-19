@@ -78,6 +78,83 @@ typedef void (*ngx_stream_script_code_pt) (ngx_stream_script_engine_t *e);
 typedef size_t (*ngx_stream_script_len_code_pt) (ngx_stream_script_engine_t *e);
 
 
+#ifdef NGX_FILC_MODE
+
+/*
+ * Fil-C function pointers are capabilities.  Stream script bytecode stores
+ * callable function pointers, so do not load opcodes through uintptr_t and do
+ * not retag them as data pointers.  Retag only the bytecode storage address,
+ * then read the stored opcode with its real function-pointer type.
+ */
+
+#define NGX_STREAM_SCRIPT_CODE_SENTINEL_SIZE                                  \
+    sizeof(ngx_stream_script_code_pt)
+
+#define NGX_STREAM_SCRIPT_LEN_SENTINEL_SIZE                                   \
+    sizeof(ngx_stream_script_len_code_pt)
+
+#define NGX_STREAM_SCRIPT_CODE_ALIGN                                          \
+    sizeof(ngx_stream_script_code_pt)
+
+
+static ngx_inline ngx_int_t
+ngx_stream_script_get_code(ngx_stream_script_engine_t *e,
+    ngx_stream_script_code_pt *code)
+{
+    ngx_stream_script_code_pt  *slot;
+
+    if (e == NULL || e->ip == NULL || code == NULL) {
+        return NGX_ERROR;
+    }
+
+    slot = (ngx_stream_script_code_pt *) ngx_filc_ptr(e->ip);
+    if (slot == NULL) {
+        return NGX_ERROR;
+    }
+
+    *code = *slot;
+
+    if (*code == NULL) {
+        return NGX_DONE;
+    }
+
+    return NGX_OK;
+}
+
+
+static ngx_inline ngx_int_t
+ngx_stream_script_get_len_code(ngx_stream_script_engine_t *e,
+    ngx_stream_script_len_code_pt *code)
+{
+    ngx_stream_script_len_code_pt  *slot;
+
+    if (e == NULL || e->ip == NULL || code == NULL) {
+        return NGX_ERROR;
+    }
+
+    slot = (ngx_stream_script_len_code_pt *) ngx_filc_ptr(e->ip);
+    if (slot == NULL) {
+        return NGX_ERROR;
+    }
+
+    *code = *slot;
+
+    if (*code == NULL) {
+        return NGX_DONE;
+    }
+
+    return NGX_OK;
+}
+
+#else
+
+#define NGX_STREAM_SCRIPT_CODE_SENTINEL_SIZE  sizeof(uintptr_t)
+#define NGX_STREAM_SCRIPT_LEN_SENTINEL_SIZE   sizeof(uintptr_t)
+#define NGX_STREAM_SCRIPT_CODE_ALIGN          sizeof(uintptr_t)
+
+#endif
+
+
 typedef struct {
     ngx_stream_script_code_pt     code;
     uintptr_t                     len;
