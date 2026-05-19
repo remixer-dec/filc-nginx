@@ -138,18 +138,36 @@ build_nginx() {
     cd "$NGINX_DIR"
     rm -rf objs-filc
 
+    COMMON_CC_OPT="-DNGX_FILC_MODE -g -O2 -Werror=implicit-function-declaration -ffile-prefix-map=$NGINX_DIR=. -fstack-protector-strong -fstack-clash-protection -Wformat -Werror=format-security -fcf-protection -fPIC -I$PREFIX/include"
+    COMMON_LD_OPT="-Wl,-z,relro -Wl,-z,now -Wl,--as-needed -pie -L$PREFIX/lib -Wl,-rpath,$PREFIX/lib"
+
     ./auto/configure \
         --builddir=objs-filc \
         --prefix=.filc-nginx-install \
         --with-filc-mode \
         --with-cc=filcc \
-        --with-cc-opt="-O2 -fno-omit-frame-pointer -I$PREFIX/include -Wno-error" \
-        --with-ld-opt="-L$PREFIX/lib -Wl,-rpath,$PREFIX/lib" \
+        --with-cc-opt="$COMMON_CC_OPT" \
+        --with-ld-opt="$COMMON_LD_OPT" \
         --with-http_ssl_module \
         --with-http_v2_module \
-        --with-openssl="$PREFIX"
+        --with-openssl="$PREFIX" \
+        --with-compat \
+        --with-threads \
+        --with-http_addition_module \
+        --with-http_auth_request_module \
+        --with-http_gunzip_module \
+        --with-http_gzip_static_module \
+        --with-http_random_index_module \
+        --with-http_realip_module \
+        --with-http_secure_link_module \
+        --with-http_slice_module \
+        --with-http_stub_status_module \
+        --with-http_sub_module \
+        --with-stream \
+        --with-stream_realip_module \
+        --with-stream_ssl_module \
+        --with-stream_ssl_preread_module
 
-    # Prevent OpenSSL rebuild rule (Obstacle 7)
     sleep 1
     touch "$PREFIX/.openssl/include/openssl/ssl.h"
 
