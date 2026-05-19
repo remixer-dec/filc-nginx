@@ -722,22 +722,15 @@ retry_slot:
             }
         }
 
-        /*
-         * A fully busy page should not be reachable from a slot list.  In a
-         * normal allocator this is an invariant failure.  In Fil-C nginx, the
-         * earlier porting bugs could also leave a valid full page linked here.
-         * Repair the list and retry the allocation rather than poisoning the
-         * shared SSL cache indefinitely.
-         */
-        if (ngx_slab_unlink_slot_page(pool, slot, page,
-                                      ngx_slab_get_type(page))
-            == NGX_OK)
-        {
-            goto retry_slot;
-        }
-
+ #ifdef NGX_FILC_MODE
+        ngx_slab_filc_invariant_error(pool, NGX_LOG_ALERT,
+            "ngx_slab_alloc(): fully busy page found in slot list", slot, page);
+#else
         ngx_slab_error(pool, NGX_LOG_ALERT,
-                       "ngx_slab_alloc(): page is busy and cannot be unlinked");
+                       "ngx_slab_alloc(): fully busy page found in slot list");
+#endif
+        p = NULL;
+        goto done;
     }
 
     page = ngx_slab_alloc_pages(pool, 1);

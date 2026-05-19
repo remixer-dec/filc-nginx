@@ -17,6 +17,50 @@
 typedef ngx_int_t (*ngx_ssl_variable_handler_pt)(ngx_connection_t *c,
     ngx_pool_t *pool, ngx_str_t *s);
 
+#ifdef NGX_FILC_MODE
+
+typedef enum {
+    NGX_HTTP_SSL_VAR_PROTOCOL = 1,
+    NGX_HTTP_SSL_VAR_CIPHER,
+    NGX_HTTP_SSL_VAR_CIPHERS,
+    NGX_HTTP_SSL_VAR_CURVE,
+    NGX_HTTP_SSL_VAR_CURVES,
+    NGX_HTTP_SSL_VAR_SIGALG,
+    NGX_HTTP_SSL_VAR_SESSION_ID,
+    NGX_HTTP_SSL_VAR_SESSION_REUSED,
+    NGX_HTTP_SSL_VAR_EARLY_DATA,
+    NGX_HTTP_SSL_VAR_SERVER_NAME,
+    NGX_HTTP_SSL_VAR_ALPN_PROTOCOL,
+    NGX_HTTP_SSL_VAR_ECH_STATUS,
+    NGX_HTTP_SSL_VAR_ECH_OUTER_SERVER_NAME,
+    NGX_HTTP_SSL_VAR_CLIENT_CERT,
+    NGX_HTTP_SSL_VAR_CLIENT_RAW_CERT,
+    NGX_HTTP_SSL_VAR_CLIENT_ESCAPED_CERT,
+    NGX_HTTP_SSL_VAR_CLIENT_S_DN,
+    NGX_HTTP_SSL_VAR_CLIENT_I_DN,
+    NGX_HTTP_SSL_VAR_CLIENT_S_DN_LEGACY,
+    NGX_HTTP_SSL_VAR_CLIENT_I_DN_LEGACY,
+    NGX_HTTP_SSL_VAR_CLIENT_SERIAL,
+    NGX_HTTP_SSL_VAR_CLIENT_FINGERPRINT,
+    NGX_HTTP_SSL_VAR_CLIENT_VERIFY,
+    NGX_HTTP_SSL_VAR_CLIENT_V_START,
+    NGX_HTTP_SSL_VAR_CLIENT_V_END,
+    NGX_HTTP_SSL_VAR_CLIENT_V_REMAIN,
+    NGX_HTTP_SSL_VAR_CLIENT_SIGALG
+} ngx_http_ssl_var_id_t;
+
+#define ngx_http_ssl_var_data(id, fn)  (uintptr_t) NGX_HTTP_SSL_VAR_##id
+
+static ngx_ssl_variable_handler_pt ngx_http_ssl_var_handler(uintptr_t data);
+static ngx_int_t ngx_http_ssl_filc_static_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data);
+
+#else
+
+#define ngx_http_ssl_var_data(id, fn)  (uintptr_t) fn
+
+#endif
+
 
 #define NGX_DEFAULT_CIPHERS     "HIGH:!aNULL:!MD5"
 #define NGX_DEFAULT_ECDH_CURVE  "auto"
@@ -351,121 +395,118 @@ ngx_module_t  ngx_http_ssl_module = {
 static ngx_http_variable_t  ngx_http_ssl_vars[] = {
 
     { ngx_string("ssl_protocol"), NULL, ngx_http_ssl_static_variable,
-      0, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(PROTOCOL, ngx_ssl_get_protocol),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_cipher"), NULL, ngx_http_ssl_static_variable,
-      1, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CIPHER, ngx_ssl_get_cipher_name),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_ciphers"), NULL, ngx_http_ssl_variable,
-      2, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CIPHERS, ngx_ssl_get_ciphers),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_curve"), NULL, ngx_http_ssl_variable,
-      3, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CURVE, ngx_ssl_get_curve),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_curves"), NULL, ngx_http_ssl_variable,
-      4, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CURVES, ngx_ssl_get_curves),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_sigalg"), NULL, ngx_http_ssl_variable,
-      5, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(SIGALG, ngx_ssl_get_sigalg),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_session_id"), NULL, ngx_http_ssl_variable,
-      6, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(SESSION_ID, ngx_ssl_get_session_id),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_session_reused"), NULL, ngx_http_ssl_variable,
-      7, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(SESSION_REUSED, ngx_ssl_get_session_reused),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_early_data"), NULL, ngx_http_ssl_variable,
-      8,
+      ngx_http_ssl_var_data(EARLY_DATA, ngx_ssl_get_early_data),
       NGX_HTTP_VAR_CHANGEABLE|NGX_HTTP_VAR_NOCACHEABLE, 0 },
 
     { ngx_string("ssl_server_name"), NULL, ngx_http_ssl_variable,
-      9, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(SERVER_NAME, ngx_ssl_get_server_name),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_alpn_protocol"), NULL, ngx_http_ssl_variable,
-      10, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(ALPN_PROTOCOL, ngx_ssl_get_alpn_protocol),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_ech_status"), NULL, ngx_http_ssl_variable,
-      11, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(ECH_STATUS, ngx_ssl_get_ech_status),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_ech_outer_server_name"), NULL, ngx_http_ssl_variable,
-      12,
+      ngx_http_ssl_var_data(ECH_OUTER_SERVER_NAME,
+                            ngx_ssl_get_ech_outer_server_name),
       NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_cert"), NULL, ngx_http_ssl_variable,
-      13, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CLIENT_CERT, ngx_ssl_get_certificate),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_raw_cert"), NULL, ngx_http_ssl_variable,
-      14,
+      ngx_http_ssl_var_data(CLIENT_RAW_CERT, ngx_ssl_get_raw_certificate),
       NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_escaped_cert"), NULL, ngx_http_ssl_variable,
-      15,
+      ngx_http_ssl_var_data(CLIENT_ESCAPED_CERT,
+                            ngx_ssl_get_escaped_certificate),
       NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_s_dn"), NULL, ngx_http_ssl_variable,
-      16, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CLIENT_S_DN, ngx_ssl_get_subject_dn),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_i_dn"), NULL, ngx_http_ssl_variable,
-      17, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CLIENT_I_DN, ngx_ssl_get_issuer_dn),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_s_dn_legacy"), NULL, ngx_http_ssl_variable,
-      18, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CLIENT_S_DN_LEGACY,
+                            ngx_ssl_get_subject_dn_legacy),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_i_dn_legacy"), NULL, ngx_http_ssl_variable,
-      19, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CLIENT_I_DN_LEGACY,
+                            ngx_ssl_get_issuer_dn_legacy),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_serial"), NULL, ngx_http_ssl_variable,
-      20, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CLIENT_SERIAL, ngx_ssl_get_serial_number),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_fingerprint"), NULL, ngx_http_ssl_variable,
-      21, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CLIENT_FINGERPRINT, ngx_ssl_get_fingerprint),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_verify"), NULL, ngx_http_ssl_variable,
-      22, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CLIENT_VERIFY, ngx_ssl_get_client_verify),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_v_start"), NULL, ngx_http_ssl_variable,
-      23, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CLIENT_V_START, ngx_ssl_get_client_v_start),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_v_end"), NULL, ngx_http_ssl_variable,
-      24, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CLIENT_V_END, ngx_ssl_get_client_v_end),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_v_remain"), NULL, ngx_http_ssl_variable,
-      25, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CLIENT_V_REMAIN, ngx_ssl_get_client_v_remain),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
     { ngx_string("ssl_client_sigalg"), NULL, ngx_http_ssl_variable,
-      26, NGX_HTTP_VAR_CHANGEABLE, 0 },
+      ngx_http_ssl_var_data(CLIENT_SIGALG, ngx_ssl_get_client_sigalg),
+      NGX_HTTP_VAR_CHANGEABLE, 0 },
 
       ngx_http_null_variable
-};
-
-static ngx_ssl_variable_handler_pt ngx_http_ssl_handlers[] = {
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_protocol,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_cipher_name,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_ciphers,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_curve,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_curves,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_sigalg,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_session_id,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_session_reused,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_early_data,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_server_name,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_alpn_protocol,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_ech_status,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_ech_outer_server_name,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_certificate,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_raw_certificate,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_escaped_certificate,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_subject_dn,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_issuer_dn,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_subject_dn_legacy,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_issuer_dn_legacy,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_serial_number,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_fingerprint,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_client_verify,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_client_v_start,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_client_v_end,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_client_v_remain,
-    (ngx_ssl_variable_handler_pt) ngx_ssl_get_client_sigalg
 };
 
 
@@ -568,14 +609,241 @@ ngx_http_ssl_alpn_select(ngx_ssl_conn_t *ssl_conn, const unsigned char **out,
 #endif
 
 
+#ifdef NGX_FILC_MODE
+
+static ngx_int_t
+ngx_http_ssl_set_literal_variable(ngx_http_variable_value_t *v,
+    u_char *data, size_t len)
+{
+    v->len = len;
+    v->data = data;
+    v->valid = 1;
+    v->no_cacheable = 0;
+    v->not_found = 0;
+
+    return NGX_OK;
+}
+
+
+static ngx_int_t
+ngx_http_ssl_filc_protocol_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v)
+{
+    int  version;
+
+    version = SSL_version(r->connection->ssl->connection);
+
+#ifdef TLS1_3_VERSION
+    if (version == TLS1_3_VERSION) {
+        return ngx_http_ssl_set_literal_variable(v,
+                   (u_char *) "TLSv1.3", sizeof("TLSv1.3") - 1);
+    }
+#endif
+
+#ifdef TLS1_2_VERSION
+    if (version == TLS1_2_VERSION) {
+        return ngx_http_ssl_set_literal_variable(v,
+                   (u_char *) "TLSv1.2", sizeof("TLSv1.2") - 1);
+    }
+#endif
+
+#ifdef TLS1_1_VERSION
+    if (version == TLS1_1_VERSION) {
+        return ngx_http_ssl_set_literal_variable(v,
+                   (u_char *) "TLSv1.1", sizeof("TLSv1.1") - 1);
+    }
+#endif
+
+#ifdef TLS1_VERSION
+    if (version == TLS1_VERSION) {
+        return ngx_http_ssl_set_literal_variable(v,
+                   (u_char *) "TLSv1", sizeof("TLSv1") - 1);
+    }
+#endif
+
+#ifdef SSL3_VERSION
+    if (version == SSL3_VERSION) {
+        return ngx_http_ssl_set_literal_variable(v,
+                   (u_char *) "SSLv3", sizeof("SSLv3") - 1);
+    }
+#endif
+
+    v->not_found = 1;
+
+    return NGX_OK;
+}
+
+
+static ngx_int_t
+ngx_http_ssl_filc_cipher_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v)
+{
+    char              *rv;
+    u_char            *p;
+    size_t             len;
+    const SSL_CIPHER  *cipher;
+
+    cipher = SSL_get_current_cipher(r->connection->ssl->connection);
+    if (cipher == NULL) {
+        v->not_found = 1;
+        return NGX_OK;
+    }
+
+    p = ngx_pnalloc(r->pool, 256);
+    if (p == NULL) {
+        return NGX_ERROR;
+    }
+
+    rv = SSL_CIPHER_description(cipher, (char *) p, 256);
+    if (rv == NULL) {
+        v->not_found = 1;
+        return NGX_OK;
+    }
+
+    for (len = 0; len < 255; len++) {
+        if (p[len] == '\0' || p[len] == ' ' || p[len] == '\t') {
+            break;
+        }
+    }
+
+    if (len == 0) {
+        v->not_found = 1;
+        return NGX_OK;
+    }
+
+    return ngx_http_ssl_set_literal_variable(v, p, len);
+}
+
+
+static ngx_int_t
+ngx_http_ssl_filc_static_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data)
+{
+    if (r->connection->ssl == NULL) {
+        v->not_found = 1;
+        return NGX_OK;
+    }
+
+    switch ((ngx_http_ssl_var_id_t) data) {
+
+    case NGX_HTTP_SSL_VAR_PROTOCOL:
+        return ngx_http_ssl_filc_protocol_variable(r, v);
+
+    case NGX_HTTP_SSL_VAR_CIPHER:
+        return ngx_http_ssl_filc_cipher_variable(r, v);
+
+    default:
+        return NGX_ERROR;
+    }
+}
+
+
+static ngx_ssl_variable_handler_pt
+ngx_http_ssl_var_handler(uintptr_t data)
+{
+    switch ((ngx_http_ssl_var_id_t) data) {
+
+    case NGX_HTTP_SSL_VAR_PROTOCOL:
+        return ngx_ssl_get_protocol;
+
+    case NGX_HTTP_SSL_VAR_CIPHER:
+        return ngx_ssl_get_cipher_name;
+
+    case NGX_HTTP_SSL_VAR_CIPHERS:
+        return ngx_ssl_get_ciphers;
+
+    case NGX_HTTP_SSL_VAR_CURVE:
+        return ngx_ssl_get_curve;
+
+    case NGX_HTTP_SSL_VAR_CURVES:
+        return ngx_ssl_get_curves;
+
+    case NGX_HTTP_SSL_VAR_SIGALG:
+        return ngx_ssl_get_sigalg;
+
+    case NGX_HTTP_SSL_VAR_SESSION_ID:
+        return ngx_ssl_get_session_id;
+
+    case NGX_HTTP_SSL_VAR_SESSION_REUSED:
+        return ngx_ssl_get_session_reused;
+
+    case NGX_HTTP_SSL_VAR_EARLY_DATA:
+        return ngx_ssl_get_early_data;
+
+    case NGX_HTTP_SSL_VAR_SERVER_NAME:
+        return ngx_ssl_get_server_name;
+
+    case NGX_HTTP_SSL_VAR_ALPN_PROTOCOL:
+        return ngx_ssl_get_alpn_protocol;
+
+    case NGX_HTTP_SSL_VAR_ECH_STATUS:
+        return ngx_ssl_get_ech_status;
+
+    case NGX_HTTP_SSL_VAR_ECH_OUTER_SERVER_NAME:
+        return ngx_ssl_get_ech_outer_server_name;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_CERT:
+        return ngx_ssl_get_certificate;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_RAW_CERT:
+        return ngx_ssl_get_raw_certificate;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_ESCAPED_CERT:
+        return ngx_ssl_get_escaped_certificate;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_S_DN:
+        return ngx_ssl_get_subject_dn;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_I_DN:
+        return ngx_ssl_get_issuer_dn;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_S_DN_LEGACY:
+        return ngx_ssl_get_subject_dn_legacy;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_I_DN_LEGACY:
+        return ngx_ssl_get_issuer_dn_legacy;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_SERIAL:
+        return ngx_ssl_get_serial_number;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_FINGERPRINT:
+        return ngx_ssl_get_fingerprint;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_VERIFY:
+        return ngx_ssl_get_client_verify;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_V_START:
+        return ngx_ssl_get_client_v_start;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_V_END:
+        return ngx_ssl_get_client_v_end;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_V_REMAIN:
+        return ngx_ssl_get_client_v_remain;
+
+    case NGX_HTTP_SSL_VAR_CLIENT_SIGALG:
+        return ngx_ssl_get_client_sigalg;
+
+    default:
+        return NULL;
+    }
+}
+
+#endif
+
+
 static ngx_int_t
 ngx_http_ssl_static_variable(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data)
 {
-    ngx_ssl_variable_handler_pt  handler = ngx_http_ssl_handlers[data];
+#ifdef NGX_FILC_MODE
+    return ngx_http_ssl_filc_static_variable(r, v, data);
+#else
+    size_t                       len;
+    ngx_str_t                    s;
+    ngx_ssl_variable_handler_pt  handler;
 
-    size_t     len;
-    ngx_str_t  s;
+    handler = (ngx_ssl_variable_handler_pt) data;
 
     if (r->connection->ssl) {
 
@@ -596,6 +864,7 @@ ngx_http_ssl_static_variable(ngx_http_request_t *r,
     v->not_found = 1;
 
     return NGX_OK;
+#endif
 }
 
 
@@ -603,9 +872,18 @@ static ngx_int_t
 ngx_http_ssl_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     uintptr_t data)
 {
-    ngx_ssl_variable_handler_pt  handler = ngx_http_ssl_handlers[data];
+    ngx_str_t                    s;
+    ngx_ssl_variable_handler_pt  handler;
 
-    ngx_str_t  s;
+#ifdef NGX_FILC_MODE
+    handler = ngx_http_ssl_var_handler(data);
+#else
+    handler = (ngx_ssl_variable_handler_pt) data;
+#endif
+
+    if (handler == NULL) {
+        return NGX_ERROR;
+    }
 
     if (r->connection->ssl) {
 

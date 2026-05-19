@@ -6256,14 +6256,24 @@ ngx_ssl_get_curve(ngx_connection_t *c, ngx_pool_t *pool, ngx_str_t *s)
 
     int          nid;
     const char  *name;
+    const char  *sn;
 
     nid = SSL_get_negotiated_group(c->ssl->connection);
 
     if (nid != NID_undef) {
-
         if ((nid & TLSEXT_nid_unknown) == 0) {
-            s->len = ngx_strlen(OBJ_nid2sn(nid));
-            s->data = (u_char *) OBJ_nid2sn(nid);
+            sn = OBJ_nid2sn(nid);
+            if (sn == NULL) {
+                return NGX_ERROR;
+            }
+            s->len = ngx_strlen(sn);
+            s->data = ngx_pnalloc(pool, s->len);
+            if (s->data == NULL) {
+                return NGX_ERROR;
+            }
+
+            ngx_memcpy(s->data, sn, s->len);
+
             return NGX_OK;
         }
 
