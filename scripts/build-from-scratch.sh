@@ -42,25 +42,35 @@ install_filc() {
 }
 
 build_zlib() {
+    local v="1.3.2" tgz="zlib-1.3.2.tar.gz" dir="zlib-1.3.2"
+
     if [ -f "$PREFIX/lib/libz.a" ]; then
         log "zlib already built"
         return
     fi
 
-    log "Building zlib 1.3..."
+    log "Building zlib $v..."
     cd "$WORK_DIR"
-    curl -fsSL https://zlib.net/fossils/zlib-1.3.tar.gz -o zlib-1.3.tar.gz
-    tar xzf zlib-1.3.tar.gz
-    cd zlib-1.3
+    rm -rf "$dir" "$tgz"
+
+    curl -fL --retry 5 --retry-all-errors --connect-timeout 20 -o "$tgz" "https://github.com/madler/zlib/releases/download/v$v/$tgz" ||
+    curl -fL --retry 5 --retry-all-errors --connect-timeout 20 -o "$tgz" "https://zlib.net/fossils/$tgz" ||
+    curl -fL --retry 5 --retry-all-errors --connect-timeout 20 -o "$tgz" "https://zlib.net/current/zlib.tar.gz" ||
+    { log "Failed to download zlib $v"; return 1; }
+
+    tar xzf "$tgz"
+    cd "$dir"
+
     CC=filcc ./configure --prefix="$PREFIX"
     make -j"$(nproc)" CC=filcc
     make install
-    # CRITICAL: copy to pizfix/lib for mangled symbol resolution
-    cp "$PREFIX/lib/libz.a" "$PREFIX/lib/libz.so.1.3" "$PIZFIX_LIB/"
-    ln -sf libz.so.1.3 "$PIZFIX_LIB/libz.so"
-    ln -sf libz.so.1.3 "$PIZFIX_LIB/libz.so.1"
+
+    cp "$PREFIX/lib/libz.a" "$PREFIX/lib/libz.so.$v" "$PIZFIX_LIB/"
+    ln -sf "libz.so.$v" "$PIZFIX_LIB/libz.so"
+    ln -sf "libz.so.$v" "$PIZFIX_LIB/libz.so.1"
+
     cd -
-    log "zlib built."
+    log "zlib $v built."
 }
 
 build_pcre2() {
